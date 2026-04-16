@@ -106,3 +106,10 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     rec_ids = {r["id"] for r in recs}
     if rec_ids and rec_ids.issubset(responded):
         st.success("Come back tomorrow for new recommendations!")
+
+    # Demo button: simulate next day's digest
+    st.divider()
+    if st.button("Recommend again (demo)", help="Fetch a fresh batch of 5 papers to evaluate quality"):
+        st.session_state.pop("todays_recs", None)
+        st.session_state.pop("responded", None)
+        st.rerun()
