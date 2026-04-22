@@ -4,6 +4,10 @@ Thin shell that initializes the database, loads the paper index (cached),
 and routes to the appropriate page based on onboarding state.
 """
 
+from pipeline.runtime import configure_single_thread_runtime
+
+configure_single_thread_runtime()
+
 import streamlit as st
 
 from pipeline.index import PaperIndex
