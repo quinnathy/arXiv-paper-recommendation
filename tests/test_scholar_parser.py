@@ -416,3 +416,90 @@ class TestLoadScholarPapersE2E:
         # Ensure the single call was to Scholar, not Semantic Scholar
         call_url = mock_get.call_args[0][0]
         assert "scholar.google.com" in call_url
+
+
+# ===================================================================
+# Live integration tests against real Scholar profiles
+# ===================================================================
+
+import time as _time
+
+LIVE_PROFILES = [
+    ("https://scholar.google.com/citations?user=2w-C5G0AAAAJ&hl=en", "2w-C5G0AAAAJ"),
+    ("https://scholar.google.com/citations?user=0RAmmIAAAAAJ&hl=en", "0RAmmIAAAAAJ"),
+    ("https://scholar.google.com/citations?user=4Vb5nvIAAAAJ&hl=en", "4Vb5nvIAAAAJ"),
+    ("https://scholar.google.com/citations?user=vx68rkMAAAAJ&hl=en", "vx68rkMAAAAJ"),
+]
+
+
+@pytest.mark.live
+class TestLiveScholarProfiles:
+    """Integration tests against real Google Scholar profiles.
+
+    Run with:  pytest tests/test_scholar_parser.py -m live -v -s
+    (The -s flag is required to see printed output.)
+    """
+
+    @pytest.mark.parametrize("url,user_id", LIVE_PROFILES)
+    def test_full_pipeline(self, url, user_id):
+        """Scrape, filter, and report diagnostics for a real profile."""
+
+        # --- Step 1: Fetch ---
+        t0 = _time.perf_counter()
+        papers_raw, profile_name = fetch_scholar_papers(user_id)
+        t_fetch = _time.perf_counter() - t0
+
+        print(f"\n{'='*70}")
+        print(f"Profile: {profile_name}  (user={user_id})")
+        print(f"URL:     {url}")
+        print(f"Fetch time: {t_fetch:.2f}s")
+        print(f"Papers scraped: {len(papers_raw)}")
+        print(f"{'-'*70}")
+        print(f"{'#':<4} {'Year':<6} {'Cites':<7} {'Authors (first 50)':<52} Title")
+        print(f"{'-'*70}")
+        for i, p in enumerate(papers_raw, 1):
+            authors_short = p["authors"][:50] + ("..." if len(p["authors"]) > 50 else "")
+            print(f"{i:<4} {p['year']:<6} {p['citations']:<7} {authors_short:<52} {p['title'][:60]}")
+
+        # --- Step 2: Filter ---
+        t1 = _time.perf_counter()
+        papers_filtered = filter_papers(papers_raw, profile_name)
+        t_filter = _time.perf_counter() - t1
+
+        print(f"\n{'='*70}")
+        print(f"FILTERED: {len(papers_filtered)} / {len(papers_raw)} papers  "
+              f"(filter time: {t_filter*1000:.1f}ms)")
+        print(f"Filter criteria: citations>20 OR year>={datetime.now().year - 5} "
+              f"OR first_author='{profile_name}'")
+        print(f"{'-'*70}")
+        print(f"{'#':<4} {'Year':<6} {'Cites':<7} {'1stAuth?':<10} Title")
+        print(f"{'-'*70}")
+        for i, p in enumerate(papers_filtered, 1):
+            is_fa = _is_first_author(profile_name, p["authors"])
+            print(f"{i:<4} {p['year']:<6} {p['citations']:<7} {'YES' if is_fa else 'no':<10} {p['title'][:60]}")
+
+        # --- Step 3: End-to-end via load_scholar_papers ---
+        t2 = _time.perf_counter()
+        result = load_scholar_papers(url)
+        t_total = _time.perf_counter() - t2
+
+        print(f"\n{'='*70}")
+        print(f"TOTAL load_scholar_papers() time: {t_total:.2f}s")
+        print(f"{'='*70}\n")
+
+        # --- Assertions ---
+        assert papers_raw, "Should scrape at least 1 paper"
+        assert profile_name, "Should extract a profile name"
+        assert papers_filtered, "Should have at least 1 filtered paper"
+        assert len(papers_filtered) <= 15, f"Should cap at 15, got {len(papers_filtered)}"
+        assert result is not None, "load_scholar_papers should succeed"
+        assert all("title" in p and "abstract" in p for p in result), (
+            "Every paper must have 'title' and 'abstract' keys"
+        )
+
+        # Verify all fields are populated
+        for p in papers_raw:
+            assert isinstance(p["title"], str) and p["title"]
+            assert isinstance(p["citations"], int) and p["citations"] >= 0
+            assert isinstance(p["year"], int)
+            assert isinstance(p["authors"], str)
