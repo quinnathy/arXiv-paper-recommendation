@@ -1,14 +1,17 @@
 """Google Scholar profile parser for user onboarding.
 
-Fetches paper titles from a public Google Scholar profile URL,
-then optionally enriches with abstracts via the Semantic Scholar API.
+Fetches paper metadata from a public Google Scholar profile URL in a
+single HTTP request.  Extracts title, authors, venue, citation count,
+and publication year for each paper, then filters to the most
+representative subset for embedding.
+
 Returns a list of dicts compatible with EmbeddingModel.embed_papers().
 """
 
 from __future__ import annotations
 
-import time
 import re
+from datetime import datetime
 from html import unescape
 from urllib.parse import urlparse, parse_qs
 
@@ -28,8 +31,6 @@ SCHOLAR_HEADERS = {
     )
 }
 
-S2_API = "https://api.semanticscholar.org/graph/v1/paper/search"
-
 
 def parse_scholar_url(url: str) -> str | None:
     """Extract the Google Scholar user ID from a profile URL.
@@ -48,15 +49,154 @@ def parse_scholar_url(url: str) -> str | None:
     return user_ids[0] if user_ids else None
 
 
-def fetch_scholar_titles(user_id: str, max_papers: int = 30) -> list[str]:
-    """Scrape paper titles from a Google Scholar profile.
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _extract_profile_name(soup_or_html) -> str:
+    """Extract the profile holder's name from the Scholar page.
+
+    Accepts either a BeautifulSoup object or a raw HTML string.
+    Returns "" if the name element is not found.
+    """
+    if BeautifulSoup is not None and isinstance(soup_or_html, BeautifulSoup):
+        el = soup_or_html.select_one("#gsc_prf_in")
+        return el.get_text(strip=True) if el else ""
+
+    # Regex fallback for raw HTML string
+    m = re.search(r'<div[^>]*id="gsc_prf_in"[^>]*>(.*?)</div>', str(soup_or_html))
+    if m:
+        return unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip()
+    return ""
+
+
+def _parse_int(text: str) -> int:
+    """Parse an integer from text, returning 0 for empty or non-numeric."""
+    digits = re.sub(r"\D", "", text)
+    return int(digits) if digits else 0
+
+
+def _normalize_last_name(name: str) -> str:
+    """Extract a normalized last name for fuzzy author matching.
+
+    Handles: "John Smith", "Smith, J.", "J Smith", "Smith".
+    Returns lowercase last name stripped of trailing punctuation.
+    """
+    name = name.strip()
+    if not name:
+        return ""
+    if "," in name:
+        last = name.split(",")[0].strip()
+    else:
+        last = name.split()[-1]
+    return last.lower().rstrip(".")
+
+
+def _is_first_author(profile_name: str, authors_str: str) -> bool:
+    """Check if the profile holder is the first author.
+
+    Compares last names only, case-insensitive.
+    """
+    if not profile_name or not authors_str:
+        return False
+    first_author = authors_str.split(",")[0].strip()
+    return _normalize_last_name(profile_name) == _normalize_last_name(first_author)
+
+
+# ---------------------------------------------------------------------------
+# Scraping
+# ---------------------------------------------------------------------------
+
+def _parse_rows_bs4(soup, max_papers: int) -> list[dict]:
+    """Extract paper metadata from Scholar HTML using BeautifulSoup."""
+    papers: list[dict] = []
+    for row in soup.select("tr.gsc_a_tr")[:max_papers]:
+        title_el = row.select_one("a.gsc_a_at")
+        if not title_el:
+            continue
+        title = title_el.get_text(strip=True)
+
+        gray_divs = row.select("td.gsc_a_t div.gs_gray")
+        authors = gray_divs[0].get_text(strip=True) if len(gray_divs) > 0 else ""
+        venue = gray_divs[1].get_text(strip=True) if len(gray_divs) > 1 else ""
+
+        cite_el = row.select_one("td.gsc_a_c")
+        citations = _parse_int(cite_el.get_text(strip=True)) if cite_el else 0
+
+        year_el = row.select_one("td.gsc_a_y span.gsc_a_h")
+        year = _parse_int(year_el.get_text(strip=True)) if year_el else 0
+
+        papers.append({
+            "title": title,
+            "authors": authors,
+            "venue": venue,
+            "citations": citations,
+            "year": year,
+            "abstract": "",
+        })
+    return papers
+
+
+def _parse_rows_regex(html: str, max_papers: int) -> list[dict]:
+    """Extract paper metadata from Scholar HTML using regex (fallback)."""
+    papers: list[dict] = []
+    row_matches = re.findall(
+        r'<tr[^>]*class="[^"]*gsc_a_tr[^"]*"[^>]*>(.*?)</tr>',
+        html,
+        re.DOTALL,
+    )
+    for row_html in row_matches[:max_papers]:
+        title_m = re.search(
+            r'<a[^>]*class="[^"]*gsc_a_at[^"]*"[^>]*>(.*?)</a>', row_html
+        )
+        if not title_m:
+            continue
+        title = unescape(re.sub(r"<[^>]+>", "", title_m.group(1))).strip()
+
+        gray = re.findall(
+            r'<div[^>]*class="[^"]*gs_gray[^"]*"[^>]*>(.*?)</div>', row_html
+        )
+        authors = unescape(re.sub(r"<[^>]+>", "", gray[0])).strip() if len(gray) > 0 else ""
+        venue = unescape(re.sub(r"<[^>]+>", "", gray[1])).strip() if len(gray) > 1 else ""
+
+        cite_m = re.search(
+            r'<td[^>]*class="[^"]*gsc_a_c[^"]*"[^>]*>(.*?)</td>', row_html, re.DOTALL
+        )
+        citations = _parse_int(cite_m.group(1)) if cite_m else 0
+
+        year_m = re.search(
+            r'<td[^>]*class="[^"]*gsc_a_y[^"]*"[^>]*>.*?(\d{4}).*?</td>',
+            row_html,
+            re.DOTALL,
+        )
+        year = int(year_m.group(1)) if year_m else 0
+
+        papers.append({
+            "title": title,
+            "authors": authors,
+            "venue": venue,
+            "citations": citations,
+            "year": year,
+            "abstract": "",
+        })
+    return papers
+
+
+def fetch_scholar_papers(
+    user_id: str,
+    max_papers: int = 30,
+) -> tuple[list[dict], str]:
+    """Scrape paper metadata and profile name from a Google Scholar profile.
+
+    Makes exactly one HTTP request.
 
     Args:
         user_id: The Google Scholar user ID.
-        max_papers: Maximum titles to retrieve. Default 30.
+        max_papers: Maximum papers to retrieve. Default 30.
 
     Returns:
-        List of paper title strings.
+        Tuple of (papers, profile_name).  Each paper dict has keys:
+        title, authors, venue, citations (int), year (int), abstract ("").
     """
     url = (
         f"https://scholar.google.com/citations"
@@ -67,74 +207,96 @@ def fetch_scholar_titles(user_id: str, max_papers: int = 30) -> list[str]:
 
     if BeautifulSoup is not None:
         soup = BeautifulSoup(resp.text, "html.parser")
-        title_links = soup.select("a.gsc_a_at")
-        return [a.get_text(strip=True) for a in title_links[:max_papers]]
+        profile_name = _extract_profile_name(soup)
+        papers = _parse_rows_bs4(soup, max_papers)
+    else:
+        profile_name = _extract_profile_name(resp.text)
+        papers = _parse_rows_regex(resp.text, max_papers)
 
-    matches = re.findall(r'<a[^>]*class="[^"]*gsc_a_at[^"]*"[^>]*>(.*?)</a>', resp.text)
-    return [unescape(re.sub(r"<[^>]+>", "", m)).strip() for m in matches[:max_papers]]
+    return papers, profile_name
 
 
-def enrich_with_abstracts(
-    titles: list[str],
-    delay: float = 0.5,
+# ---------------------------------------------------------------------------
+# Filtering
+# ---------------------------------------------------------------------------
+
+def filter_papers(
+    papers: list[dict],
+    profile_name: str,
+    max_n: int = 15,
 ) -> list[dict]:
-    """Look up abstracts for paper titles via Semantic Scholar.
+    """Select the most representative papers for embedding.
 
-    Falls back to empty abstract if not found. Returns dicts with
-    "title" and "abstract" keys, compatible with EmbeddingModel.embed_papers().
+    A paper is kept if it satisfies ANY of:
+    - More than 20 citations
+    - Published in the recent 5 years
+    - Profile holder is the first author
+
+    If more than *max_n* papers pass, the top *max_n* by citation count
+    are kept.  If zero papers pass, falls back to ``papers[:max_n]``.
 
     Args:
-        titles: List of paper title strings.
-        delay: Seconds between API calls to respect rate limits.
+        papers: Paper dicts from :func:`fetch_scholar_papers`.
+        profile_name: Profile holder's name for first-author detection.
+        max_n: Maximum papers to return.  Default 15.
 
     Returns:
-        List of {"title": str, "abstract": str} dicts.
+        Filtered list of paper dicts, length <= *max_n*.
     """
-    results = []
-    for title in titles:
-        abstract = ""
-        try:
-            resp = requests.get(
-                S2_API,
-                params={"query": title, "limit": 1, "fields": "title,abstract"},
-                timeout=10,
-            )
-            if resp.status_code == 200:
-                data = resp.json().get("data", [])
-                if data and data[0].get("abstract"):
-                    abstract = data[0]["abstract"]
-        except requests.RequestException:
-            pass
+    if not papers:
+        return []
 
-        results.append({"title": title, "abstract": abstract})
-        time.sleep(delay)
+    current_year = datetime.now().year
+    cutoff_year = current_year - 5
 
-    return results
+    passed: list[dict] = []
+    for p in papers:
+        if p["citations"] > 20:
+            passed.append(p)
+        elif p["year"] > 0 and p["year"] >= cutoff_year:
+            passed.append(p)
+        elif _is_first_author(profile_name, p["authors"]):
+            passed.append(p)
 
+    # Fallback: if no papers matched any condition, return what we have
+    if not passed:
+        passed = list(papers)
+
+    # Sort by citations descending and cap at max_n
+    passed.sort(key=lambda p: p["citations"], reverse=True)
+    return passed[:max_n]
+
+
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
 
 def load_scholar_papers(
     scholar_url: str,
     max_papers: int = 30,
 ) -> list[dict] | None:
-    """End-to-end: URL -> list of {"title", "abstract"} dicts.
+    """End-to-end: URL -> filtered list of paper dicts.
 
     Args:
         scholar_url: A Google Scholar profile URL.
-        max_papers: Maximum papers to retrieve.
+        max_papers: Maximum papers to scrape from the page.
 
     Returns:
-        List of paper dicts, or None if the URL is invalid or scraping fails.
+        List of paper dicts (filtered to ~15), or None if the URL is
+        invalid or scraping fails.  Each dict has at least "title" and
+        "abstract" keys for compatibility with
+        :meth:`EmbeddingModel.embed_papers`.
     """
     user_id = parse_scholar_url(scholar_url)
     if user_id is None:
         return None
 
     try:
-        titles = fetch_scholar_titles(user_id, max_papers)
+        papers, profile_name = fetch_scholar_papers(user_id, max_papers)
     except requests.RequestException:
         return None
 
-    if not titles:
+    if not papers:
         return None
 
-    return enrich_with_abstracts(titles)
+    return filter_papers(papers, profile_name)

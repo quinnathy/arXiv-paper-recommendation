@@ -64,7 +64,8 @@ class PaperIndex:
         if not embeddings_path.exists():
             return  # Data not ready; is_loaded() will return False
 
-        self.embeddings = np.load(data / "embeddings.npy")
+        # self.embeddings = np.load(data / "embeddings.npy")
+        self.embeddings = np.load(data / "embeddings.npy", mmap_mode="r")
         self.cluster_ids = np.load(data / "cluster_ids.npy")
         self.centroids = np.load(data / "centroids.npy")
         self.category_centroids = np.load(
