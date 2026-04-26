@@ -4,6 +4,7 @@ optional Scholar profile, and diversity slider.
 
 from __future__ import annotations
 
+import numpy as np
 import streamlit as st
 
 from pipeline.concept_tags import BROAD_CONCEPT_KEYS, CONCEPT_TAG_MAP
@@ -11,7 +12,12 @@ from pipeline.embed import EmbeddingModel
 from pipeline.index import PaperIndex
 from pipeline.interest_expander import embed_free_text_interests
 from pipeline.scholar_parser import load_scholar_papers
-from ui.components import TOPIC_LABELS, free_text_input, unified_tag_selector
+from ui.components import (
+    TOPIC_LABELS,
+    expand_topic_labels,
+    free_text_input,
+    unified_tag_selector,
+)
 from user.db import create_user
 from user.profile import (
     SeedSignal,
@@ -26,6 +32,36 @@ from user.profile import (
 @st.cache_resource
 def _get_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
+
+
+def make_category_seeds_from_topic_labels(
+    selected_labels: list[str],
+    category_centroids: dict[str, np.ndarray],
+) -> list[SeedSignal]:
+    """Build category seeds from human-readable onboarding labels."""
+    topic_keys = expand_topic_labels(
+        selected_labels=selected_labels,
+        topic_labels=TOPIC_LABELS,
+        category_centroids=category_centroids,
+    )
+    if selected_labels and not topic_keys:
+        raise ValueError(
+            "None of the selected onboarding topics are available in the "
+            "current corpus category centroids."
+        )
+
+    seeds: list[SeedSignal] = []
+    for code in topic_keys:
+        label = next(
+            (
+                selected_label
+                for selected_label in selected_labels
+                if code in TOPIC_LABELS.get(selected_label, [])
+            ),
+            code,
+        )
+        seeds.append(make_category_seed(code, label, category_centroids[code]))
+    return seeds
 
 
 def render_onboarding(index: PaperIndex, db_path: str) -> None:
@@ -43,7 +79,7 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
             "Run `python scripts/build_concept_embeddings.py` to unlock "
             "more themes."
         )
-    selected_categories, selected_concepts = unified_tag_selector(
+    selected_topic_labels, selected_concepts = unified_tag_selector(
         index.category_centroids, concept_embeddings,
     )
 
@@ -74,7 +110,7 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
             st.error("Please enter your name.")
             return
         if (
-            not selected_categories
+            not selected_topic_labels
             and not selected_concepts
             and not free_texts
             and not scholar_url.strip()
@@ -88,16 +124,30 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         # -- Assemble seed signals --
         seeds: list[SeedSignal] = []
 
-        # arXiv categories
-        for code in selected_categories:
-            label = next((l for l, c in TOPIC_LABELS.items() if c == code), code)
-            seeds.append(make_category_seed(code, label, index.category_centroids[code]))
+        # arXiv categories expanded from human-readable onboarding topics.
+        try:
+            seeds.extend(
+                make_category_seeds_from_topic_labels(
+                    selected_topic_labels,
+                    index.category_centroids,
+                )
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
 
         # Concept tags
         for key in selected_concepts:
             tag = CONCEPT_TAG_MAP[key]
             broad = key in BROAD_CONCEPT_KEYS
-            seeds.append(make_concept_seed(key, tag.label, concept_embeddings[key], broad=broad))
+            seeds.append(
+                make_concept_seed(
+                    key,
+                    tag.label,
+                    concept_embeddings[key],
+                    broad=broad,
+                )
+            )
 
         # Free-text interests
         if free_texts:

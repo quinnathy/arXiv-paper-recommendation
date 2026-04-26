@@ -5,6 +5,8 @@ data/centroids.npy
 data/category_centroids.npy
 data/paper_meta.jsonl
 data/arxiv_rec.db
+data/concept_embeddings_meta.json
+data/concept_embeddings.npy
 
 # Python
 __pycache__/

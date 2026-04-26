@@ -17,25 +17,199 @@ import streamlit as st
 from pipeline.concept_tags import CONCEPT_TAG_MAP
 
 
-# Human-readable label -> arXiv category code mapping.
-# Only topics that exist in the corpus (category_centroids) will be shown.
-TOPIC_LABELS: dict[str, str] = {
-    "Machine Learning": "cs.LG",
-    "Computer Vision": "cs.CV",
-    "Natural Language Processing": "cs.CL",
-    "Robotics": "cs.RO",
-    "Statistics / ML Theory": "stat.ML",
-    "Artificial Intelligence": "cs.AI",
-    "Computation & Language": "cs.CL",
-    "Neural Networks": "cs.NE",
-    "Information Retrieval": "cs.IR",
-    "Human-Computer Interaction": "cs.HC",
-    "Cryptography & Security": "cs.CR",
-    "Distributed Computing": "cs.DC",
-    "Computational Biology": "q-bio.QM",
-    "Physics & ML": "physics.comp-ph",
-    "Quantitative Finance": "q-fin.CP",
+# Human-readable onboarding label -> one or more arXiv category codes.
+# Only categories present in category_centroids are used at runtime.
+TOPIC_LABELS: dict[str, list[str]] = {
+    # AI / ML core
+    "Artificial Intelligence": ["cs.AI"],
+    "Machine Learning": ["cs.LG", "stat.ML"],
+    "Deep Learning & Neural Networks": ["cs.LG", "cs.NE", "stat.ML"],
+    "Reinforcement Learning & Decision Making": [
+        "cs.LG",
+        "cs.AI",
+        "cs.MA",
+        "eess.SY",
+    ],
+    "Natural Language Processing": ["cs.CL", "cs.LG", "cs.IR"],
+    "Large Language Models": ["cs.CL", "cs.LG", "cs.AI", "cs.IR"],
+    "Computer Vision": ["cs.CV", "cs.LG", "eess.IV"],
+    "Generative Models": ["cs.LG", "cs.CV", "cs.CL", "stat.ML"],
+
+    # AI applications / interdisciplinary ML
+    "Healthcare AI": [
+        "cs.LG",
+        "cs.CV",
+        "cs.CL",
+        "cs.AI",
+        "stat.ML",
+        "q-bio.QM",
+        "eess.IV",
+    ],
+    "Medical Imaging": ["cs.CV", "eess.IV", "cs.LG", "stat.ML", "q-bio.QM"],
+    "Computational Biology & Bioinformatics": [
+        "q-bio.QM",
+        "q-bio.GN",
+        "q-bio.MN",
+        "q-bio.BM",
+        "cs.LG",
+        "stat.ML",
+    ],
+    "Computational Neuroscience": ["q-bio.NC", "cs.NE", "cs.LG", "stat.ML"],
+    "Climate, Weather & Earth Systems": [
+        "physics.ao-ph",
+        "physics.geo-ph",
+        "cs.LG",
+        "stat.ML",
+        "math.NA",
+    ],
+    "Scientific Machine Learning": [
+        "cs.LG",
+        "stat.ML",
+        "math.NA",
+        "math.OC",
+        "physics.comp-ph",
+        "cs.CE",
+    ],
+    "AI for Education": ["cs.CY", "cs.HC", "cs.AI", "cs.LG", "cs.CL"],
+    "Finance & Economics AI": [
+        "q-fin.CP",
+        "q-fin.ST",
+        "q-fin.PM",
+        "q-fin.RM",
+        "econ.EM",
+        "cs.LG",
+        "stat.ML",
+    ],
+
+    # Data / information / retrieval
+    "Information Retrieval & Search": ["cs.IR", "cs.CL", "cs.DL", "cs.DB"],
+    "Databases & Data Mining": ["cs.DB", "cs.LG", "stat.ML"],
+    "Recommender Systems & Web Data": ["cs.IR", "cs.SI", "cs.LG", "cs.DB"],
+    "Social & Information Networks": ["cs.SI", "cs.CY", "cs.LG", "stat.ML"],
+
+    # Human-centered computing
+    "Human-Computer Interaction": ["cs.HC", "cs.CY"],
+    "Computers and Society": ["cs.CY", "cs.HC", "cs.SI"],
+    "Responsible AI, Fairness & Society": ["cs.CY", "cs.AI", "cs.LG", "stat.ML"],
+
+    # Robotics / control / embodied systems
+    "Robotics": ["cs.RO", "cs.AI", "cs.LG", "eess.SY"],
+    "Control Systems": ["eess.SY", "math.OC", "cs.SY"],
+    "Multiagent Systems": ["cs.MA", "cs.AI", "cs.GT", "cs.LG"],
+
+    # Systems / software / infrastructure
+    "Distributed & Parallel Computing": ["cs.DC", "cs.PF", "cs.OS"],
+    "Computer Networks": ["cs.NI", "cs.DC"],
+    "Operating Systems": ["cs.OS", "cs.DC", "cs.PF"],
+    "Software Engineering": ["cs.SE", "cs.PL"],
+    "Programming Languages": ["cs.PL", "cs.LO"],
+    "Computer Architecture": ["cs.AR", "cs.ET"],
+    "Security & Privacy": ["cs.CR", "cs.CY"],
+
+    # Theory / algorithms / formal methods
+    "Algorithms & Data Structures": ["cs.DS", "cs.CC"],
+    "Computational Complexity": ["cs.CC", "cs.DS"],
+    "Logic & Formal Methods": ["cs.LO", "math.LO", "cs.FL"],
+    "Cryptography Theory": ["cs.CR", "cs.IT", "math.NT"],
+    "Game Theory & Mechanism Design": ["cs.GT", "econ.TH", "math.OC"],
+
+    # Statistics / probability / optimization
+    "Statistics & Data Analysis": ["stat.AP", "stat.ME", "stat.CO", "math.ST"],
+    "Statistical Machine Learning": ["stat.ML", "cs.LG", "stat.ME"],
+    "Probability & Stochastic Processes": ["math.PR", "stat.TH"],
+    "Optimization": ["math.OC", "cs.LG", "stat.ML"],
+
+    # Mathematics
+    "Pure Mathematics": [
+        "math.AG",
+        "math.AT",
+        "math.CO",
+        "math.DG",
+        "math.FA",
+        "math.GT",
+        "math.NT",
+        "math.RT",
+    ],
+    "Applied Mathematics": ["math.NA", "math.OC", "math.AP", "math.DS", "math.PR"],
+    "Numerical Analysis & Scientific Computing": [
+        "math.NA",
+        "cs.NA",
+        "cs.CE",
+        "physics.comp-ph",
+    ],
+    "Dynamical Systems": ["math.DS", "math.OC", "physics.class-ph"],
+
+    # Physics / astronomy / quantum
+    "Computational Physics": ["physics.comp-ph", "cs.CE", "math.NA"],
+    "Quantum Information & Quantum Computing": ["quant-ph", "cs.ET", "cs.IT"],
+    "Astrophysics & Cosmology": [
+        "astro-ph.CO",
+        "astro-ph.GA",
+        "astro-ph.HE",
+        "astro-ph.IM",
+        "astro-ph.SR",
+        "astro-ph.EP",
+    ],
+    "Condensed Matter Physics": [
+        "cond-mat.mtrl-sci",
+        "cond-mat.stat-mech",
+        "cond-mat.mes-hall",
+        "cond-mat.soft",
+        "cond-mat.str-el",
+        "cond-mat.supr-con",
+    ],
+    "High Energy Physics": ["hep-th", "hep-ph", "hep-ex", "hep-lat"],
+    "Nuclear Physics": ["nucl-th", "nucl-ex"],
+    "Fluid Dynamics": ["physics.flu-dyn", "nlin.CD", "math.AP"],
+    "Optics & Photonics": ["physics.optics", "eess.SP"],
+
+    # Signal / image / audio
+    "Signal Processing": ["eess.SP", "cs.IT", "stat.ML"],
+    "Image & Video Processing": ["eess.IV", "cs.CV", "cs.MM"],
+    "Audio & Speech Processing": ["eess.AS", "cs.SD", "cs.CL"],
+
+    # Quantitative finance / economics
+    "Quantitative Finance": [
+        "q-fin.CP",
+        "q-fin.MF",
+        "q-fin.PM",
+        "q-fin.PR",
+        "q-fin.RM",
+        "q-fin.ST",
+        "q-fin.TR",
+    ],
+    "Economics": ["econ.EM", "econ.GN", "econ.TH"],
 }
+
+
+def available_topic_labels(
+    topic_labels: dict[str, list[str]],
+    category_centroids: dict[str, np.ndarray],
+) -> list[str]:
+    """Return onboarding labels with at least one available arXiv category."""
+    return [
+        label
+        for label, cats in topic_labels.items()
+        if any(cat in category_centroids for cat in cats)
+    ]
+
+
+def expand_topic_labels(
+    selected_labels: list[str],
+    topic_labels: dict[str, list[str]],
+    category_centroids: dict[str, np.ndarray],
+) -> list[str]:
+    """Expand selected onboarding labels into available arXiv category codes."""
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    for label in selected_labels:
+        for cat in topic_labels.get(label, []):
+            if cat in category_centroids and cat not in seen:
+                expanded.append(cat)
+                seen.add(cat)
+
+    return expanded
 
 
 def paper_card(
@@ -115,10 +289,11 @@ def unified_tag_selector(
         concept_embeddings: Dict mapping concept key to unit-norm embedding.
 
     Returns:
-        ``(selected_category_codes, selected_concept_keys)`` — two lists
-        partitioned by source so the caller can build the right seed type.
+        ``(selected_topic_labels, selected_concept_keys)`` — two lists
+        partitioned by source so the caller can expand labels and build the
+        right seed type.
     """
-    # label → ("concept", concept_key) or ("category", arxiv_code)
+    # label → ("concept", concept_key) or ("category", onboarding_label)
     label_map: dict[str, tuple[str, str]] = {}
 
     # Concept tags first — they win on label collisions.
@@ -126,10 +301,10 @@ def unified_tag_selector(
         if key in concept_embeddings:
             label_map[tag.label] = ("concept", key)
 
-    # arXiv categories — skip labels already claimed by a concept tag.
-    for label, code in TOPIC_LABELS.items():
-        if code in category_centroids and label not in label_map:
-            label_map[label] = ("category", code)
+    # arXiv-backed onboarding topics — skip labels already claimed by a concept tag.
+    for label in available_topic_labels(TOPIC_LABELS, category_centroids):
+        if label not in label_map:
+            label_map[label] = ("category", label)
 
     options = sorted(label_map.keys())
 
@@ -139,17 +314,17 @@ def unified_tag_selector(
         default=None,
     )
 
-    # Partition selections back into categories and concepts.
-    category_codes: set[str] = set()
+    # Partition selections back into topic labels and concepts.
+    topic_labels: list[str] = []
     concept_keys: list[str] = []
     for label in selected_labels:
         kind, key = label_map[label]
         if kind == "concept":
             concept_keys.append(key)
         else:
-            category_codes.add(key)  # dedup (e.g. cs.CL appears twice)
+            topic_labels.append(key)
 
-    return list(category_codes), concept_keys
+    return topic_labels, concept_keys
 
 
 def free_text_input() -> list[str]:
