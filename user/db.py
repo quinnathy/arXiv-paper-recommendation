@@ -14,6 +14,7 @@ Centroids serialization:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -23,9 +24,9 @@ import numpy as np
 DB_PATH = "data/arxiv_rec.db"
 
 
-def _connect(db_path: str = DB_PATH) -> sqlite3.Connection:
+def _connect(db_path: str | None = None) -> sqlite3.Connection:
     """Return a connection to the SQLite database."""
-    return sqlite3.connect(db_path)
+    return sqlite3.connect(db_path or DB_PATH)
 
 
 def init_db(db_path: str = DB_PATH) -> None:
@@ -40,13 +41,15 @@ def init_db(db_path: str = DB_PATH) -> None:
     conn = _connect(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id      TEXT PRIMARY KEY,
-            display_name TEXT NOT NULL,
-            centroids    BLOB NOT NULL,
-            k_u          INTEGER NOT NULL DEFAULT 1,
-            diversity    REAL NOT NULL DEFAULT 0.5,
-            created_at   TEXT NOT NULL,
-            last_active  TEXT NOT NULL
+            user_id        TEXT PRIMARY KEY,
+            display_name   TEXT NOT NULL,
+            centroids      BLOB NOT NULL,
+            k_u            INTEGER NOT NULL DEFAULT 1,
+            diversity      REAL NOT NULL DEFAULT 0.5,
+            created_at     TEXT NOT NULL,
+            last_active    TEXT NOT NULL,
+            thread_weights BLOB DEFAULT NULL,
+            thread_labels  TEXT DEFAULT NULL
         )
     """)
     conn.execute("""
@@ -60,6 +63,14 @@ def init_db(db_path: str = DB_PATH) -> None:
             created_at TEXT NOT NULL
         )
     """)
+    # Additive migration: add thread metadata columns if missing.
+    for col in ("thread_weights BLOB DEFAULT NULL",
+                "thread_labels TEXT DEFAULT NULL"):
+        try:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
     conn.commit()
     conn.close()
 
@@ -69,6 +80,8 @@ def create_user(
     centroids: np.ndarray,
     k_u: int,
     diversity: float = 0.5,
+    thread_weights: np.ndarray | None = None,
+    thread_labels: list[str] | None = None,
 ) -> str:
     """Create a new user record in the database.
 
@@ -77,6 +90,8 @@ def create_user(
         centroids: The user's initial centroids, shape (k_u, 768), float32, unit-norm rows.
         k_u: Number of research threads (1–3).
         diversity: The diversity slider value, 0.0–1.0.
+        thread_weights: Optional (k_u,) float32 array of per-thread importance.
+        thread_labels: Optional list of k_u human-readable thread names.
 
     Returns:
         The generated user_id (UUID string).
@@ -84,12 +99,15 @@ def create_user(
     user_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     blob = centroids.astype(np.float32).tobytes()
+    tw_blob = thread_weights.astype(np.float32).tobytes() if thread_weights is not None else None
+    tl_json = json.dumps(thread_labels) if thread_labels is not None else None
 
     conn = _connect()
     conn.execute(
         "INSERT INTO users (user_id, display_name, centroids, k_u, diversity, "
-        "created_at, last_active) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (user_id, display_name, blob, k_u, diversity, now, now),
+        "created_at, last_active, thread_weights, thread_labels) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (user_id, display_name, blob, k_u, diversity, now, now, tw_blob, tl_json),
     )
     conn.commit()
     conn.close()
@@ -104,12 +122,14 @@ def get_user(user_id: str) -> dict | None:
 
     Returns:
         Dict with keys: user_id, display_name, centroids (np.ndarray shape (k_u, 768)),
-        k_u, diversity, created_at, last_active. Returns None if user not found.
+        k_u, diversity, created_at, last_active, thread_weights, thread_labels.
+        Returns None if user not found.
     """
     conn = _connect()
     row = conn.execute(
         "SELECT user_id, display_name, centroids, k_u, diversity, "
-        "created_at, last_active FROM users WHERE user_id = ?",
+        "created_at, last_active, thread_weights, thread_labels "
+        "FROM users WHERE user_id = ?",
         (user_id,),
     ).fetchone()
     conn.close()
@@ -118,6 +138,9 @@ def get_user(user_id: str) -> dict | None:
         return None
 
     k_u = row[3]
+    tw_blob = row[7]
+    tl_text = row[8]
+
     return {
         "user_id": row[0],
         "display_name": row[1],
@@ -126,6 +149,10 @@ def get_user(user_id: str) -> dict | None:
         "diversity": row[4],
         "created_at": row[5],
         "last_active": row[6],
+        "thread_weights": (
+            np.frombuffer(tw_blob, dtype=np.float32).copy() if tw_blob is not None else None
+        ),
+        "thread_labels": json.loads(tl_text) if tl_text is not None else None,
     }
 
 
