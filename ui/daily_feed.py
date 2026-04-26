@@ -15,7 +15,7 @@ from pipeline.index import PaperIndex
 from recommender.engine import recommend
 from user.db import get_user, get_seen_ids, log_feedback, update_centroids
 from user.profile import apply_feedback
-from user.session import save_centroids_to_session
+from user.session import logout_user, save_centroids_to_session
 from ui.components import paper_card
 
 
@@ -66,12 +66,17 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
 
     with st.sidebar:
         st.write(f"**{user['display_name']}**")
+        if user.get("username"):
+            st.caption(f"@{user['username']}")
         created = user["created_at"][:10] if user["created_at"] else ""
         st.caption(f"Member since {created}")
         seen = get_seen_ids(user_id)
         st.metric("Papers seen", len(seen))
         st.metric("Research threads", user["k_u"])
         st.metric("Diversity", f"{user['diversity']:.1f}")
+        if st.button("Log out"):
+            logout_user()
+            st.rerun()
 
     if "todays_recs" not in st.session_state:
         centroids = st.session_state["user_centroids"]
