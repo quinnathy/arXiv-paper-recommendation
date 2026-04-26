@@ -232,7 +232,7 @@ def paper_card(
     is_responded = arxiv_id in responded
 
     with st.container(border=True):
-        st.subheader(meta["title"])
+        st.subheader(" ".join(meta["title"].split()))
 
         # Category badges
         categories = meta.get("categories", [])
