@@ -35,6 +35,7 @@ def load_or_init_session(db_path: str) -> None:
         st.session_state["user_diversity"] = None
         st.session_state["thread_labels"] = None
         st.session_state["thread_weights"] = None
+        st.session_state["seed_thread_labels"] = None
         st.session_state["onboarded"] = False
 
 
@@ -58,6 +59,7 @@ def login_user(user_id: str, db_path: str) -> bool:
     st.session_state["user_diversity"] = user["diversity"]
     st.session_state["thread_labels"] = user.get("thread_labels")
     st.session_state["thread_weights"] = user.get("thread_weights")
+    st.session_state["seed_thread_labels"] = None
     st.session_state["onboarded"] = True
     return True
 
