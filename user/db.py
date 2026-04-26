@@ -14,7 +14,10 @@ Centroids serialization:
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import secrets
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -43,6 +46,8 @@ def init_db(db_path: str = DB_PATH) -> None:
         CREATE TABLE IF NOT EXISTS users (
             user_id        TEXT PRIMARY KEY,
             display_name   TEXT NOT NULL,
+            username       TEXT,
+            password_hash  TEXT,
             centroids      BLOB NOT NULL,
             k_u            INTEGER NOT NULL DEFAULT 1,
             diversity      REAL NOT NULL DEFAULT 0.5,
@@ -65,7 +70,9 @@ def init_db(db_path: str = DB_PATH) -> None:
     """)
     # Additive migration: add thread metadata columns if missing.
     for col in ("thread_weights BLOB DEFAULT NULL",
-                "thread_labels TEXT DEFAULT NULL"):
+                "thread_labels TEXT DEFAULT NULL",
+                "username TEXT",
+                "password_hash TEXT"):
         try:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col}")
         except sqlite3.OperationalError:
@@ -75,6 +82,33 @@ def init_db(db_path: str = DB_PATH) -> None:
     conn.close()
 
 
+def _hash_password(password: str) -> str:
+    """Return a salted PBKDF2 hash in a compact string format."""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 200_000)
+    return (
+        f"pbkdf2_sha256$200000$"
+        f"{base64.b64encode(salt).decode('ascii')}$"
+        f"{base64.b64encode(digest).decode('ascii')}"
+    )
+
+
+def _verify_password(password: str, encoded_hash: str) -> bool:
+    """Verify a plaintext password against a stored PBKDF2 hash."""
+    try:
+        algorithm, rounds_txt, salt_b64, digest_b64 = encoded_hash.split("$")
+        if algorithm != "pbkdf2_sha256":
+            return False
+        rounds = int(rounds_txt)
+        salt = base64.b64decode(salt_b64.encode("ascii"))
+        expected = base64.b64decode(digest_b64.encode("ascii"))
+    except (ValueError, TypeError):
+        return False
+
+    candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+    return secrets.compare_digest(candidate, expected)
+
+
 def create_user(
     display_name: str,
     centroids: np.ndarray,
@@ -82,6 +116,8 @@ def create_user(
     diversity: float = 0.5,
     thread_weights: np.ndarray | None = None,
     thread_labels: list[str] | None = None,
+    username: str | None = None,
+    password: str | None = None,
 ) -> str:
     """Create a new user record in the database.
 
@@ -92,6 +128,8 @@ def create_user(
         diversity: The diversity slider value, 0.0–1.0.
         thread_weights: Optional (k_u,) float32 array of per-thread importance.
         thread_labels: Optional list of k_u human-readable thread names.
+        username: Optional account username for returning-user login.
+        password: Optional plaintext password (stored as PBKDF2 hash).
 
     Returns:
         The generated user_id (UUID string).
@@ -101,13 +139,36 @@ def create_user(
     blob = centroids.astype(np.float32).tobytes()
     tw_blob = thread_weights.astype(np.float32).tobytes() if thread_weights is not None else None
     tl_json = json.dumps(thread_labels) if thread_labels is not None else None
+    normalized_username = username.strip().lower() if username else None
+    password_hash = _hash_password(password) if password else None
 
     conn = _connect()
+    if normalized_username:
+        exists = conn.execute(
+            "SELECT 1 FROM users WHERE username = ?",
+            (normalized_username,),
+        ).fetchone()
+        if exists is not None:
+            conn.close()
+            raise ValueError("Username already exists.")
+
     conn.execute(
-        "INSERT INTO users (user_id, display_name, centroids, k_u, diversity, "
-        "created_at, last_active, thread_weights, thread_labels) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (user_id, display_name, blob, k_u, diversity, now, now, tw_blob, tl_json),
+        "INSERT INTO users (user_id, display_name, username, password_hash, centroids, "
+        "k_u, diversity, created_at, last_active, thread_weights, thread_labels) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id,
+            display_name,
+            normalized_username,
+            password_hash,
+            blob,
+            k_u,
+            diversity,
+            now,
+            now,
+            tw_blob,
+            tl_json,
+        ),
     )
     conn.commit()
     conn.close()
@@ -137,7 +198,7 @@ def get_user(user_id: str) -> dict | None:
     """
     conn = _connect()
     row = conn.execute(
-        "SELECT user_id, display_name, centroids, k_u, diversity, "
+        "SELECT user_id, display_name, username, centroids, k_u, diversity, "
         "created_at, last_active, thread_weights, thread_labels "
         "FROM users WHERE user_id = ?",
         (user_id,),
@@ -147,9 +208,9 @@ def get_user(user_id: str) -> dict | None:
     if row is None:
         return None
 
-    k_u = row[3]
-    tw_blob = row[7]
-    tl_text = row[8]
+    k_u = row[4]
+    tw_blob = row[8]
+    tl_text = row[9]
 
     thread_weights = _default_thread_weights(k_u)
     if tw_blob is not None:
@@ -173,14 +234,33 @@ def get_user(user_id: str) -> dict | None:
     return {
         "user_id": row[0],
         "display_name": row[1],
-        "centroids": np.frombuffer(row[2], dtype=np.float32).copy().reshape(k_u, 768),
+        "username": row[2],
+        "centroids": np.frombuffer(row[3], dtype=np.float32).copy().reshape(k_u, 768),
         "k_u": k_u,
-        "diversity": row[4],
-        "created_at": row[5],
-        "last_active": row[6],
+        "diversity": row[5],
+        "created_at": row[6],
+        "last_active": row[7],
         "thread_weights": thread_weights,
         "thread_labels": thread_labels,
     }
+
+
+def authenticate_user(username: str, password: str) -> dict | None:
+    """Authenticate by username/password and return user payload on success."""
+    normalized_username = username.strip().lower()
+    conn = _connect()
+    row = conn.execute(
+        "SELECT user_id, password_hash FROM users WHERE username = ?",
+        (normalized_username,),
+    ).fetchone()
+    conn.close()
+
+    if row is None:
+        return None
+    user_id, password_hash = row
+    if not password_hash or not _verify_password(password, password_hash):
+        return None
+    return get_user(user_id)
 
 
 def update_centroids(user_id: str, centroids: np.ndarray) -> None:

@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import streamlit as st
 
-from user.db import get_user
+from user.db import authenticate_user, get_user
 
 
 def load_or_init_session(db_path: str) -> None:
@@ -61,7 +61,46 @@ def login_user(user_id: str, db_path: str) -> bool:
     st.session_state["thread_weights"] = user.get("thread_weights")
     st.session_state["seed_thread_labels"] = None
     st.session_state["onboarded"] = True
+    st.session_state.pop("todays_recs", None)
+    st.session_state.pop("responded", None)
     return True
+
+
+def login_with_credentials(username: str, password: str) -> bool:
+    """Authenticate with username/password and load user into session."""
+    user = authenticate_user(username, password)
+    if user is None:
+        return False
+
+    st.session_state["user_id"] = user["user_id"]
+    st.session_state["user_centroids"] = user["centroids"]
+    st.session_state["user_k_u"] = user["k_u"]
+    st.session_state["user_diversity"] = user["diversity"]
+    st.session_state["thread_labels"] = user.get("thread_labels")
+    st.session_state["thread_weights"] = user.get("thread_weights")
+    st.session_state["seed_thread_labels"] = None
+    st.session_state["onboarded"] = True
+    st.session_state.pop("todays_recs", None)
+    st.session_state.pop("responded", None)
+    return True
+
+
+def logout_user() -> None:
+    """Clear user/auth session state for a clean logged-out state."""
+    for key in (
+        "user_id",
+        "user_centroids",
+        "user_k_u",
+        "user_diversity",
+        "thread_labels",
+        "thread_weights",
+        "seed_thread_labels",
+        "onboarded",
+        "todays_recs",
+        "responded",
+    ):
+        st.session_state.pop(key, None)
+    load_or_init_session("")
 
 
 def save_centroids_to_session(centroids: np.ndarray) -> None:

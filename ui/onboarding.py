@@ -19,6 +19,7 @@ from ui.components import (
     unified_tag_selector,
 )
 from user.db import create_user
+from user.session import login_with_credentials
 from user.profile import (
     SeedSignal,
     init_user_profile_v2,
@@ -68,8 +69,60 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
     st.title("ArXiv Daily")
     st.write("Personalized paper recommendations from arXiv, delivered daily.")
     st.divider()
+    if "auth_mode" not in st.session_state:
+        st.session_state["auth_mode"] = None
 
-    name = st.text_input("Your name", placeholder="Enter your display name")
+    mode = st.session_state["auth_mode"]
+    if mode is None:
+        st.subheader("Welcome")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("Log in", use_container_width=True):
+                st.session_state["auth_mode"] = "Log in"
+                st.rerun()
+        with col2:
+            if st.button("Sign up", use_container_width=True):
+                st.session_state["auth_mode"] = "Create account"
+                st.rerun()
+        with col3:
+            if st.button("Continue as guest", use_container_width=True):
+                st.session_state["auth_mode"] = "Continue as guest"
+                st.rerun()
+        return
+
+    if mode == "Log in":
+        if st.button("Back"):
+            st.session_state["auth_mode"] = None
+            st.rerun()
+        username = st.text_input("Username", key="login_username")
+        password = st.text_input("Password", type="password", key="login_password")
+        if st.button("Log in", type="primary"):
+            if not username.strip() or not password:
+                st.error("Please enter both username and password.")
+                return
+            if not login_with_credentials(username, password):
+                st.error("Invalid username or password.")
+                return
+            st.success("Welcome back!")
+            st.rerun()
+        return
+
+    if st.button("Back"):
+        st.session_state["auth_mode"] = None
+        st.rerun()
+
+    is_guest = mode == "Continue as guest"
+    if not is_guest:
+        username = st.text_input("Username", placeholder="Choose a username")
+        password = st.text_input("Password", type="password")
+        confirm_password = st.text_input("Confirm password", type="password")
+        name = username.strip()
+    else:
+        st.caption("Guest mode: no account required. Your session is temporary.")
+        username = ""
+        password = ""
+        confirm_password = ""
+        name = st.text_input("Your name", placeholder="Enter your display name")
 
     # -- Topic & concept tag selection (unified) --
     concept_embeddings = index.concept_embeddings or {}
@@ -106,7 +159,20 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
     )
 
     if st.button("Start reading", type="primary"):
-        if not name.strip():
+        if not is_guest:
+            if not username.strip():
+                st.error("Please choose a username.")
+                return
+            if len(password) < 8:
+                st.error("Password must be at least 8 characters.")
+                return
+            if password != confirm_password:
+                st.error("Passwords do not match.")
+                return
+        if not is_guest and not username.strip():
+            st.error("Please choose a username.")
+            return
+        if is_guest and not name.strip():
             st.error("Please enter your name.")
             return
         if (
@@ -182,11 +248,20 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         result = init_user_profile_v2(seeds)
         centroids = result.centroids
         k_u = centroids.shape[0]
-        user_id = create_user(
-            name.strip(), centroids, k_u, diversity,
-            thread_weights=result.thread_weights,
-            thread_labels=result.thread_labels,
-        )
+        try:
+            user_id = create_user(
+                (username.strip() if not is_guest else name.strip()),
+                centroids,
+                k_u,
+                diversity,
+                thread_weights=result.thread_weights,
+                thread_labels=result.thread_labels,
+                username=username.strip() if not is_guest else None,
+                password=password if not is_guest else None,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
 
         st.session_state["user_id"] = user_id
         st.session_state["user_centroids"] = centroids
