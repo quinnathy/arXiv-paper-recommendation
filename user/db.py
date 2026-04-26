@@ -114,6 +114,16 @@ def create_user(
     return user_id
 
 
+def _default_thread_weights(k_u: int) -> np.ndarray:
+    if k_u <= 0:
+        return np.array([], dtype=np.float32)
+    return np.full(k_u, 1.0 / k_u, dtype=np.float32)
+
+
+def _default_thread_labels(k_u: int) -> list[str]:
+    return [f"Thread {i + 1}" for i in range(k_u)]
+
+
 def get_user(user_id: str) -> dict | None:
     """Retrieve a user record by user_id.
 
@@ -141,6 +151,25 @@ def get_user(user_id: str) -> dict | None:
     tw_blob = row[7]
     tl_text = row[8]
 
+    thread_weights = _default_thread_weights(k_u)
+    if tw_blob is not None:
+        loaded_weights = np.frombuffer(tw_blob, dtype=np.float32).copy()
+        if loaded_weights.shape == (k_u,):
+            thread_weights = loaded_weights
+
+    thread_labels = _default_thread_labels(k_u)
+    if tl_text is not None:
+        try:
+            loaded_labels = json.loads(tl_text)
+        except json.JSONDecodeError:
+            loaded_labels = None
+        if (
+            isinstance(loaded_labels, list)
+            and len(loaded_labels) == k_u
+            and all(isinstance(label, str) for label in loaded_labels)
+        ):
+            thread_labels = loaded_labels
+
     return {
         "user_id": row[0],
         "display_name": row[1],
@@ -149,10 +178,8 @@ def get_user(user_id: str) -> dict | None:
         "diversity": row[4],
         "created_at": row[5],
         "last_active": row[6],
-        "thread_weights": (
-            np.frombuffer(tw_blob, dtype=np.float32).copy() if tw_blob is not None else None
-        ),
-        "thread_labels": json.loads(tl_text) if tl_text is not None else None,
+        "thread_weights": thread_weights,
+        "thread_labels": thread_labels,
     }
 
 
