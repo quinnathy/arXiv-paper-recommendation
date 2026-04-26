@@ -1,21 +1,38 @@
-"""Onboarding page: topic selection + optional Scholar profile + diversity slider."""
+"""Onboarding page: topic & concept selection, free-text interests,
+optional Scholar profile, and diversity slider.
+"""
 
 from __future__ import annotations
 
-import streamlit as st
 import numpy as np
+import streamlit as st
 
-from pipeline.index import PaperIndex
+from pipeline.concept_tags import BROAD_CONCEPT_KEYS, CONCEPT_TAG_MAP, compute_concept_embeddings
 from pipeline.embed import EmbeddingModel
+from pipeline.index import PaperIndex
+from pipeline.interest_expander import embed_free_text_interests
 from pipeline.scholar_parser import load_scholar_papers
+from ui.components import TOPIC_LABELS, concept_tag_selector, free_text_input, topic_selector
 from user.db import create_user
-from user.profile import init_user_profile
-from ui.components import topic_selector
+from user.profile import (
+    SeedSignal,
+    init_user_profile_v2,
+    make_category_seed,
+    make_concept_seed,
+    make_freetext_seed,
+    make_scholar_seed,
+)
 
 
 @st.cache_resource
 def _get_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
+
+
+@st.cache_resource
+def _get_concept_embeddings() -> dict[str, np.ndarray]:
+    model = _get_embed_model()
+    return compute_concept_embeddings(model)
 
 
 def render_onboarding(index: PaperIndex, db_path: str) -> None:
@@ -25,8 +42,17 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
 
     name = st.text_input("Your name", placeholder="Enter your display name")
 
-    st.write("**Pick topics you're interested in:**")
+    # -- arXiv category selection --
+    st.write("**Pick arXiv categories you follow:**")
     selected_categories = topic_selector(index.category_centroids)
+
+    # -- Concept tag selection --
+    concept_embeddings = _get_concept_embeddings()
+    st.write("**Or pick some interdisciplinary themes:**")
+    selected_concepts = concept_tag_selector(concept_embeddings)
+
+    # -- Free-text interests --
+    free_texts = free_text_input()
 
     # -- Optional Scholar profile --
     st.write("**Optional:** paste your Google Scholar profile URL for "
@@ -51,12 +77,33 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         if not name.strip():
             st.error("Please enter your name.")
             return
-        if not selected_categories:
-            st.error("Please select at least one topic.")
+        if not selected_categories and not selected_concepts:
+            st.error("Please select at least one arXiv category or theme.")
             return
 
-        # Embed Scholar papers if provided
-        paper_embeddings = None
+        # -- Assemble seed signals --
+        seeds: list[SeedSignal] = []
+
+        # arXiv categories
+        for code in selected_categories:
+            label = next((l for l, c in TOPIC_LABELS.items() if c == code), code)
+            seeds.append(make_category_seed(code, label, index.category_centroids[code]))
+
+        # Concept tags
+        for key in selected_concepts:
+            tag = CONCEPT_TAG_MAP[key]
+            broad = key in BROAD_CONCEPT_KEYS
+            seeds.append(make_concept_seed(key, tag.label, concept_embeddings[key], broad=broad))
+
+        # Free-text interests
+        if free_texts:
+            with st.spinner("Embedding your interests..."):
+                model = _get_embed_model()
+                for phrase, emb in embed_free_text_interests(free_texts, model):
+                    seeds.append(make_freetext_seed(phrase, emb))
+
+        # Scholar papers
+        papers = None
         if scholar_url.strip():
             with st.spinner("Fetching your Scholar profile..."):
                 papers = load_scholar_papers(scholar_url.strip())
@@ -64,21 +111,26 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
                 with st.spinner("Embedding your papers..."):
                     model = _get_embed_model()
                     paper_embeddings = model.embed_papers(papers)
+                    for i, paper in enumerate(papers):
+                        seeds.append(make_scholar_seed(paper["title"], paper_embeddings[i]))
             else:
                 st.warning("Could not load Scholar profile. "
-                           "Continuing with topics only.")
+                           "Continuing with other signals.")
 
-        centroids = init_user_profile(
-            selected_categories,
-            index.category_centroids,
-            paper_embeddings=paper_embeddings,
-        )
+        # -- Initialize profile --
+        centroids, thread_labels, thread_weights = init_user_profile_v2(seeds)
         k_u = centroids.shape[0]
-        user_id = create_user(name.strip(), centroids, k_u, diversity)
+        user_id = create_user(
+            name.strip(), centroids, k_u, diversity,
+            thread_weights=thread_weights,
+            thread_labels=thread_labels,
+        )
 
         st.session_state["user_id"] = user_id
         st.session_state["user_centroids"] = centroids
         st.session_state["user_k_u"] = k_u
         st.session_state["user_diversity"] = diversity
+        st.session_state["thread_labels"] = thread_labels
+        st.session_state["thread_weights"] = thread_weights
         st.session_state["onboarded"] = True
         st.rerun()
