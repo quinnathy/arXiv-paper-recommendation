@@ -2,7 +2,8 @@
 
 Provides self-contained components that can be composed into pages:
 - paper_card: renders a single paper with action buttons.
-- topic_selector: multiselect for arXiv categories with human-readable labels.
+- unified_tag_selector: single multiselect for arXiv categories + concept tags.
+- free_text_input: text area for free-form research interests.
 - loading_spinner_with_message: context manager for custom spinner messages.
 """
 
@@ -100,58 +101,55 @@ def paper_card(
                 on_skip(arxiv_id)
 
 
-def topic_selector(category_centroids: dict) -> list[str]:
-    """Render a multiselect widget for arXiv topic categories.
+def unified_tag_selector(
+    category_centroids: dict[str, np.ndarray],
+    concept_embeddings: dict[str, np.ndarray],
+) -> tuple[list[str], list[str]]:
+    """Single multiselect combining arXiv categories and concept tags.
 
-    Only shows topics that exist in the loaded corpus.
-
-    Args:
-        category_centroids: Dict mapping arXiv category string to centroid vector.
-
-    Returns:
-        List of selected arXiv category code strings, e.g. ["cs.LG", "cs.CV"].
-    """
-    # Filter to topics that exist in the corpus
-    available: dict[str, str] = {
-        label: code
-        for label, code in TOPIC_LABELS.items()
-        if code in category_centroids
-    }
-
-    selected_labels = st.multiselect(
-        "Select your research interests",
-        options=list(available.keys()),
-        default=None,
-    )
-
-    # Map labels back to category codes (deduplicate)
-    selected_codes = list({available[label] for label in selected_labels})
-    return selected_codes
-
-
-def concept_tag_selector(concept_embeddings: dict[str, np.ndarray]) -> list[str]:
-    """Render a multiselect for interdisciplinary concept tags.
-
-    Only shows tags whose embeddings have been computed.
+    Concept tags take priority when a label collision occurs (e.g.
+    "Computational Biology" exists in both pools).
 
     Args:
+        category_centroids: Dict mapping arXiv category code to centroid vector.
         concept_embeddings: Dict mapping concept key to unit-norm embedding.
 
     Returns:
-        List of selected concept tag keys.
+        ``(selected_category_codes, selected_concept_keys)`` — two lists
+        partitioned by source so the caller can build the right seed type.
     """
-    available: dict[str, str] = {}
+    # label → ("concept", concept_key) or ("category", arxiv_code)
+    label_map: dict[str, tuple[str, str]] = {}
+
+    # Concept tags first — they win on label collisions.
     for key, tag in CONCEPT_TAG_MAP.items():
         if key in concept_embeddings:
-            available[tag.label] = key
+            label_map[tag.label] = ("concept", key)
+
+    # arXiv categories — skip labels already claimed by a concept tag.
+    for label, code in TOPIC_LABELS.items():
+        if code in category_centroids and label not in label_map:
+            label_map[label] = ("category", code)
+
+    options = sorted(label_map.keys())
 
     selected_labels = st.multiselect(
-        "Select interdisciplinary themes",
-        options=list(available.keys()),
+        "Select your research interests",
+        options=options,
         default=None,
     )
 
-    return [available[label] for label in selected_labels]
+    # Partition selections back into categories and concepts.
+    category_codes: set[str] = set()
+    concept_keys: list[str] = []
+    for label in selected_labels:
+        kind, key = label_map[label]
+        if kind == "concept":
+            concept_keys.append(key)
+        else:
+            category_codes.add(key)  # dedup (e.g. cs.CL appears twice)
+
+    return list(category_codes), concept_keys
 
 
 def free_text_input() -> list[str]:

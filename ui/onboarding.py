@@ -11,7 +11,7 @@ from pipeline.embed import EmbeddingModel
 from pipeline.index import PaperIndex
 from pipeline.interest_expander import embed_free_text_interests
 from pipeline.scholar_parser import load_scholar_papers
-from ui.components import TOPIC_LABELS, concept_tag_selector, free_text_input, topic_selector
+from ui.components import TOPIC_LABELS, free_text_input, unified_tag_selector
 from user.db import create_user
 from user.profile import (
     SeedSignal,
@@ -35,19 +35,17 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
 
     name = st.text_input("Your name", placeholder="Enter your display name")
 
-    # -- arXiv category selection --
-    st.write("**Pick arXiv categories you follow:**")
-    selected_categories = topic_selector(index.category_centroids)
-
-    # -- Concept tag selection --
+    # -- Topic & concept tag selection (unified) --
     concept_embeddings = index.concept_embeddings or {}
-    st.write("**Or pick some interdisciplinary themes:**")
+    st.write("**Pick topics and themes you're interested in:**")
     if index.concept_embeddings is None:
-        st.warning(
-            "Concept themes are unavailable. Run "
-            "`python scripts/build_concept_embeddings.py` to enable them."
+        st.caption(
+            "Run `python scripts/build_concept_embeddings.py` to unlock "
+            "more themes."
         )
-    selected_concepts = concept_tag_selector(concept_embeddings)
+    selected_categories, selected_concepts = unified_tag_selector(
+        index.category_centroids, concept_embeddings,
+    )
 
     # -- Free-text interests --
     free_texts = free_text_input()
