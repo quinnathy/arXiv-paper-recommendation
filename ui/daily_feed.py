@@ -16,7 +16,7 @@ from recommender.engine import recommend
 from user.db import get_user, get_seen_ids, log_feedback, update_embedding
 from user.profile import apply_feedback
 from user.session import save_embedding_to_session
-from ui.components import paper_card
+from ui.components import inject_design, paper_card
 
 
 def _handle_feedback(
@@ -65,6 +65,7 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
         index: The loaded PaperIndex for recommendation lookups.
         db_path: Path to the SQLite database for feedback logging.
     """
+    inject_design()
     user_id = st.session_state["user_id"]
     user = get_user(user_id)
 
