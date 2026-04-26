@@ -69,6 +69,24 @@ class SeedSignal:
     ] = "arxiv_category"
 
 
+@dataclass
+class ProfileInitializationResult:
+    """Result of threshold-based profile initialization.
+
+    Attributes:
+        centroids: Unit-norm user centroids, shape (k_u, 768).
+        seed_labels: Integer thread assignment for each input seed,
+            shape (n_seeds,).
+        thread_weights: Normalized per-thread weights, shape (k_u,).
+        thread_labels: Human-readable label for each thread.
+    """
+
+    centroids: np.ndarray
+    seed_labels: np.ndarray
+    thread_weights: np.ndarray
+    thread_labels: list[str]
+
+
 # ---------------------------------------------------------------------------
 # Seed factory helpers
 # ---------------------------------------------------------------------------
@@ -236,7 +254,7 @@ def init_user_profile_v2(
     max_threads: int = MAX_THREADS,
     merge_threshold: float = MERGE_THRESHOLD,
     core_split_power: float = CORE_SPLIT_POWER,
-) -> tuple[np.ndarray, list[str], np.ndarray]:
+) -> ProfileInitializationResult:
     """Initialize user centroids from weighted seed signals.
 
     This is the replacement for KMeans-based initialization.
@@ -254,20 +272,19 @@ def init_user_profile_v2(
         core_split_power: Minimum ``split_power`` to be a core seed.
 
     Returns:
-        Tuple of ``(centroids, thread_labels, thread_weights)`` where:
-        - *centroids*: ``(k_u, 768)`` float32 unit-norm array.
-        - *thread_labels*: list of ``k_u`` human-readable labels.
-        - *thread_weights*: ``(k_u,)`` float64 array summing to 1.
+        ProfileInitializationResult with centroids, per-seed integer thread
+        assignments, thread labels, and normalized thread weights.
     """
     if len(seeds) == 0:
         raise ValueError("Cannot initialize user profile with zero seeds.")
 
     if len(seeds) == 1:
         s = seeds[0]
-        return (
-            s.vector.astype(np.float32).reshape(1, -1),
-            [s.label],
-            np.array([1.0]),
+        return ProfileInitializationResult(
+            centroids=s.vector.astype(np.float32).reshape(1, -1),
+            seed_labels=np.array([0], dtype=int),
+            thread_weights=np.array([1.0]),
+            thread_labels=[s.label],
         )
 
     # 1. Partition core vs support.
@@ -315,8 +332,9 @@ def init_user_profile_v2(
     centroids = []
     thread_labels: list[str] = []
     thread_weights_raw: list[float] = []
+    seed_labels = np.empty(len(seeds), dtype=int)
 
-    for grp in global_groups:
+    for group_id, grp in enumerate(global_groups):
         vecs = all_vectors[grp]
         wts = all_weights[grp]
         c = _normalize((vecs * wts[:, None]).sum(axis=0)).astype(np.float32)
@@ -327,13 +345,20 @@ def init_user_profile_v2(
         thread_labels.append(seeds[best_label_idx].label)
 
         thread_weights_raw.append(float(wts.sum()))
+        for seed_idx in grp:
+            seed_labels[seed_idx] = group_id
 
     centroids_arr = _normalize_rows(np.stack(centroids)).astype(np.float32)
 
     tw = np.array(thread_weights_raw)
     tw = tw / tw.sum()
 
-    return centroids_arr, thread_labels, tw
+    return ProfileInitializationResult(
+        centroids=centroids_arr,
+        seed_labels=seed_labels,
+        thread_weights=tw,
+        thread_labels=thread_labels,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -376,8 +401,8 @@ def init_user_profile(
         fallback = next(iter(category_centroids.values()))
         return fallback.astype(np.float32).copy().reshape(1, 768)
 
-    centroids, _, _ = init_user_profile_v2(seeds, max_threads=max_k)
-    return centroids
+    result = init_user_profile_v2(seeds, max_threads=max_k)
+    return result.centroids
 
 
 # ---------------------------------------------------------------------------
