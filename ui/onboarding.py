@@ -4,10 +4,9 @@ optional Scholar profile, and diversity slider.
 
 from __future__ import annotations
 
-import numpy as np
 import streamlit as st
 
-from pipeline.concept_tags import BROAD_CONCEPT_KEYS, CONCEPT_TAG_MAP, compute_concept_embeddings
+from pipeline.concept_tags import BROAD_CONCEPT_KEYS, CONCEPT_TAG_MAP
 from pipeline.embed import EmbeddingModel
 from pipeline.index import PaperIndex
 from pipeline.interest_expander import embed_free_text_interests
@@ -29,12 +28,6 @@ def _get_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
 
 
-@st.cache_resource
-def _get_concept_embeddings() -> dict[str, np.ndarray]:
-    model = _get_embed_model()
-    return compute_concept_embeddings(model)
-
-
 def render_onboarding(index: PaperIndex, db_path: str) -> None:
     st.title("ArXiv Daily")
     st.write("Personalized paper recommendations from arXiv, delivered daily.")
@@ -47,8 +40,13 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
     selected_categories = topic_selector(index.category_centroids)
 
     # -- Concept tag selection --
-    concept_embeddings = _get_concept_embeddings()
+    concept_embeddings = index.concept_embeddings or {}
     st.write("**Or pick some interdisciplinary themes:**")
+    if index.concept_embeddings is None:
+        st.warning(
+            "Concept themes are unavailable. Run "
+            "`python scripts/build_concept_embeddings.py` to enable them."
+        )
     selected_concepts = concept_tag_selector(concept_embeddings)
 
     # -- Free-text interests --
@@ -77,8 +75,16 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         if not name.strip():
             st.error("Please enter your name.")
             return
-        if not selected_categories and not selected_concepts:
-            st.error("Please select at least one arXiv category or theme.")
+        if (
+            not selected_categories
+            and not selected_concepts
+            and not free_texts
+            and not scholar_url.strip()
+        ):
+            st.error(
+                "Please provide at least one category, theme, free-text "
+                "interest, or Scholar profile."
+            )
             return
 
         # -- Assemble seed signals --
@@ -118,19 +124,28 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
                            "Continuing with other signals.")
 
         # -- Initialize profile --
-        centroids, thread_labels, thread_weights = init_user_profile_v2(seeds)
+        if not seeds:
+            st.error(
+                "Could not build any usable profile seeds. Please add another "
+                "interest signal."
+            )
+            return
+
+        result = init_user_profile_v2(seeds)
+        centroids = result.centroids
         k_u = centroids.shape[0]
         user_id = create_user(
             name.strip(), centroids, k_u, diversity,
-            thread_weights=thread_weights,
-            thread_labels=thread_labels,
+            thread_weights=result.thread_weights,
+            thread_labels=result.thread_labels,
         )
 
         st.session_state["user_id"] = user_id
         st.session_state["user_centroids"] = centroids
         st.session_state["user_k_u"] = k_u
         st.session_state["user_diversity"] = diversity
-        st.session_state["thread_labels"] = thread_labels
-        st.session_state["thread_weights"] = thread_weights
+        st.session_state["thread_labels"] = result.thread_labels
+        st.session_state["thread_weights"] = result.thread_weights
+        st.session_state["seed_thread_labels"] = result.seed_labels
         st.session_state["onboarded"] = True
         st.rerun()

@@ -9,7 +9,10 @@ The registry is a pure-data module with no UI or DB dependencies.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 
@@ -27,7 +30,8 @@ class ConceptTag:
             style strings so SPECTER2 produces high-quality embeddings.
         related_arxiv_categories: arXiv codes loosely associated with this
             theme (informational; not used for embedding).
-        embedding: Populated at startup via :func:`compute_concept_embeddings`.
+        embedding: Populated by :func:`compute_concept_embeddings` or by
+            loading the standalone concept embedding artifact.
     """
 
     key: str
@@ -335,14 +339,11 @@ CONCEPT_TAGS: list[ConceptTag] = [
 ]
 
 CONCEPT_TAG_MAP: dict[str, ConceptTag] = {tag.key: tag for tag in CONCEPT_TAGS}
+CONCEPT_EMBEDDINGS_FILE = "concept_embeddings.npy"
+CONCEPT_EMBEDDINGS_META_FILE = "concept_embeddings_meta.json"
 
 # Broad concepts that should contribute to threads but not easily create their own.
-BROAD_CONCEPT_KEYS: set[str] = {
-    "reinforcement_learning",
-    "generative_models",
-    "graph_neural_networks",
-    "multimodal_learning",
-}
+BROAD_CONCEPT_KEYS: set[str] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -396,4 +397,108 @@ def compute_concept_embeddings(model: object) -> dict[str, np.ndarray]:
         CONCEPT_TAG_MAP[key].embedding = emb
         result[key] = emb
 
+    return result
+
+
+def _ordered_concept_keys(embeddings: dict[str, np.ndarray]) -> list[str]:
+    """Return concept keys in registry order, omitting missing embeddings."""
+    return [tag.key for tag in CONCEPT_TAGS if tag.key in embeddings]
+
+
+def save_concept_embedding_artifacts(
+    embeddings: dict[str, np.ndarray],
+    data_dir: str | Path = "data",
+    metadata: dict | None = None,
+) -> None:
+    """Save concept embeddings as a compact matrix plus JSON metadata.
+
+    Args:
+        embeddings: Mapping from concept key to unit-norm embedding vector.
+        data_dir: Directory where artifacts should be written.
+        metadata: Optional extra metadata to merge into the JSON sidecar.
+
+    Raises:
+        ValueError: If embeddings are missing, malformed, non-finite, or not
+            approximately unit-normalized.
+    """
+    keys = _ordered_concept_keys(embeddings)
+    if not keys:
+        raise ValueError("No concept embeddings were provided.")
+
+    matrix = np.stack([np.asarray(embeddings[key], dtype=np.float32) for key in keys])
+    if matrix.ndim != 2:
+        raise ValueError(f"Expected a 2D embedding matrix, got shape {matrix.shape}.")
+    if not np.isfinite(matrix).all():
+        raise ValueError("Concept embeddings contain non-finite values.")
+
+    norms = np.linalg.norm(matrix, axis=1)
+    if not np.allclose(norms, 1.0, atol=1e-4):
+        raise ValueError("Concept embeddings must be unit-normalized.")
+
+    output_dir = Path(data_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    np.save(output_dir / CONCEPT_EMBEDDINGS_FILE, matrix.astype(np.float32))
+    meta = {
+        "keys": keys,
+        "embedding_dim": int(matrix.shape[1]),
+        "concept_count": int(matrix.shape[0]),
+        "dtype": "float32",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if metadata:
+        meta.update(metadata)
+
+    with open(output_dir / CONCEPT_EMBEDDINGS_META_FILE, "w", encoding="utf-8") as fh:
+        json.dump(meta, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def load_concept_embedding_artifacts(
+    data_dir: str | Path = "data",
+) -> dict[str, np.ndarray]:
+    """Load precomputed concept embeddings from disk.
+
+    Returns:
+        Dict mapping concept key to unit-norm float32 embedding.
+
+    Raises:
+        FileNotFoundError: If either artifact is missing.
+        ValueError: If artifact contents are malformed.
+    """
+    data = Path(data_dir)
+    matrix_path = data / CONCEPT_EMBEDDINGS_FILE
+    meta_path = data / CONCEPT_EMBEDDINGS_META_FILE
+
+    missing = [str(path) for path in (matrix_path, meta_path) if not path.exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Missing concept embedding artifact(s): " + ", ".join(missing)
+        )
+
+    matrix = np.load(matrix_path).astype(np.float32, copy=False)
+    with open(meta_path, "r", encoding="utf-8") as fh:
+        meta = json.load(fh)
+
+    keys = meta.get("keys")
+    if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+        raise ValueError("Concept embedding metadata must contain a string 'keys' list.")
+    if matrix.ndim != 2:
+        raise ValueError(f"Expected a 2D concept embedding matrix, got {matrix.shape}.")
+    if len(keys) != matrix.shape[0]:
+        raise ValueError(
+            f"Concept metadata key count {len(keys)} does not match matrix rows "
+            f"{matrix.shape[0]}."
+        )
+    if not np.isfinite(matrix).all():
+        raise ValueError("Concept embeddings contain non-finite values.")
+
+    norms = np.linalg.norm(matrix, axis=1)
+    if not np.allclose(norms, 1.0, atol=1e-4):
+        raise ValueError("Concept embeddings must be unit-normalized.")
+
+    result = {key: matrix[i].copy() for i, key in enumerate(keys)}
+    for key, embedding in result.items():
+        if key in CONCEPT_TAG_MAP:
+            CONCEPT_TAG_MAP[key].embedding = embedding
     return result
