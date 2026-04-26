@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import Callable
 
+import numpy as np
 import streamlit as st
+
+from pipeline.concept_tags import CONCEPT_TAG_MAP
 
 
 # Human-readable label -> arXiv category code mapping.
@@ -124,6 +127,55 @@ def topic_selector(category_centroids: dict) -> list[str]:
     # Map labels back to category codes (deduplicate)
     selected_codes = list({available[label] for label in selected_labels})
     return selected_codes
+
+
+def concept_tag_selector(concept_embeddings: dict[str, np.ndarray]) -> list[str]:
+    """Render a multiselect for interdisciplinary concept tags.
+
+    Only shows tags whose embeddings have been computed.
+
+    Args:
+        concept_embeddings: Dict mapping concept key to unit-norm embedding.
+
+    Returns:
+        List of selected concept tag keys.
+    """
+    available: dict[str, str] = {}
+    for key, tag in CONCEPT_TAG_MAP.items():
+        if key in concept_embeddings:
+            available[tag.label] = key
+
+    selected_labels = st.multiselect(
+        "Select interdisciplinary themes",
+        options=list(available.keys()),
+        default=None,
+    )
+
+    return [available[label] for label in selected_labels]
+
+
+def free_text_input() -> list[str]:
+    """Render a text area for free-form research interest descriptions.
+
+    Returns:
+        List of non-empty phrase strings (one per line).
+    """
+    with st.expander("Describe your interests in your own words (optional)"):
+        raw = st.text_area(
+            "Free-text interests",
+            placeholder=(
+                "e.g., diffusion models for medical imaging\n"
+                "single-cell perturbation modeling\n"
+                "LLMs for clinical decision support"
+            ),
+            label_visibility="collapsed",
+        )
+
+    if not raw or not raw.strip():
+        return []
+
+    phrases = [p.strip() for p in raw.splitlines()]
+    return [p for p in phrases if p]
 
 
 def loading_spinner_with_message(message: str):
