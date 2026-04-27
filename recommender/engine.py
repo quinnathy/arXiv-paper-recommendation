@@ -114,11 +114,14 @@ def expand_clusters_near_user(
 def _score_candidates(
     candidates: list[tuple[float, dict, int]],
     recency_weight: float = 0.25,
+    noise_scale: float = 0.02,
 ) -> list[tuple[float, dict, int]]:
+    rng = np.random.default_rng()
     scored: list[tuple[float, dict, int]] = []
     for sim_score, meta, nearest_ci in candidates:
         bonus = recency_weight * recency_score(meta.get("update_date", ""))
-        final = sim_score + bonus
+        noise = rng.uniform(-noise_scale, noise_scale)
+        final = sim_score + bonus + noise
         meta["rec_score"] = final
         scored.append((final, meta, nearest_ci))
     scored.sort(key=lambda x: x[0], reverse=True)
