@@ -63,6 +63,7 @@ def login_user(user_id: str, db_path: str) -> bool:
     st.session_state["onboarded"] = True
     st.session_state.pop("todays_recs", None)
     st.session_state.pop("responded", None)
+    st.session_state.pop("shown_ids", None)
     return True
 
 
@@ -82,6 +83,7 @@ def login_with_credentials(username: str, password: str) -> bool:
     st.session_state["onboarded"] = True
     st.session_state.pop("todays_recs", None)
     st.session_state.pop("responded", None)
+    st.session_state.pop("shown_ids", None)
     return True
 
 
@@ -98,6 +100,7 @@ def logout_user() -> None:
         "onboarded",
         "todays_recs",
         "responded",
+        "shown_ids",
     ):
         st.session_state.pop(key, None)
     load_or_init_session("")

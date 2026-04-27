@@ -78,13 +78,18 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
             logout_user()
             st.rerun()
 
+    if "shown_ids" not in st.session_state:
+        st.session_state["shown_ids"] = set()
+
     if "todays_recs" not in st.session_state:
         centroids = st.session_state["user_centroids"]
         diversity = st.session_state["user_diversity"]
         seen_ids = get_seen_ids(user_id)
+        excluded_ids = seen_ids | st.session_state["shown_ids"]
         with st.spinner("Finding your papers..."):
-            recs = recommend(centroids, seen_ids, index, diversity=diversity, n=5)
+            recs = recommend(centroids, excluded_ids, index, diversity=diversity, n=5)
         st.session_state["todays_recs"] = recs
+        st.session_state["shown_ids"].update(r["id"] for r in recs)
 
     if "responded" not in st.session_state:
         st.session_state["responded"] = set()
@@ -92,7 +97,12 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     recs = st.session_state["todays_recs"]
 
     if not recs:
-        st.info("You've seen most papers in your areas — come back tomorrow.")
+        st.info("You've explored all available papers in your areas for this session.")
+        if st.button("Reset and start fresh"):
+            st.session_state["shown_ids"] = set()
+            st.session_state.pop("todays_recs", None)
+            st.session_state.pop("responded", None)
+            st.rerun()
         return
     if len(recs) < 5:
         st.warning("You've seen most papers in your areas. Here's what we found:")
