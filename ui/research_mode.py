@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit.components.v1 import iframe
 from user.db import save_research_note, get_all_notes
 from fpdf import FPDF
 from pipeline.transcribe import get_paper_markdown
@@ -15,7 +16,7 @@ def render_research_mode():
         st.subheader(f"Current Paper: {active_id}")
         if active_id != "No Paper Selected":
             pdf_url = f"https://arxiv.org/pdf/{active_id}.pdf"
-            st.components.v1.iframe(pdf_url, height=800)
+            iframe(pdf_url, height=800)
         else:
             st.info("Select a paper from your feed to start researching.")
         if st.button("✨ Transcribe with AI"):
