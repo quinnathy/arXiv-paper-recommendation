@@ -16,6 +16,8 @@ from user.session import load_or_init_session, is_onboarded
 from ui.onboarding import render_onboarding
 from ui.daily_feed import render_daily_feed
 
+from ui.research_mode import render_research_mode
+
 DB_PATH = "data/arxiv_rec.db"
 
 st.set_page_config(
@@ -56,4 +58,9 @@ if not index.is_loaded():
 if not is_onboarded():
     render_onboarding(index, DB_PATH)
 else:
-    render_daily_feed(index, DB_PATH)
+    page = st.sidebar.radio("Navigation", ["Daily Feed", "Research Lab"])
+    
+    if page == "Daily Feed":
+        render_daily_feed(index, DB_PATH)
+    else:
+        render_research_mode()

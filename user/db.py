@@ -60,6 +60,16 @@ def init_db(db_path: str = DB_PATH) -> None:
             created_at TEXT NOT NULL
         )
     """)
+    # for research
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS research_notes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    TEXT NOT NULL,
+            arxiv_id   TEXT NOT NULL,
+            content    TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -193,3 +203,24 @@ def get_seen_ids(user_id: str) -> set[str]:
     conn.close()
 
     return {row[0] for row in rows}
+
+# research mode
+def save_research_note(user_id: str, content: str, source_arxiv_id: str = None):
+    now = datetime.now(timezone.utc).isoformat()
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO research_notes (user_id, content, arxiv_id, created_at) VALUES (?, ?, ?, ?)",
+        (user_id, content, source_arxiv_id, now)
+    )
+    conn.commit()
+    conn.close()
+
+def get_all_notes(user_id: str):
+    conn = _connect()
+    # Order by created_at so it feels like a chronological "wall"
+    rows = conn.execute(
+        "SELECT content, arxiv_id, created_at FROM research_notes WHERE user_id = ? ORDER BY created_at ASC",
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    return rows
