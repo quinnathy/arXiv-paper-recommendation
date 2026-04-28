@@ -19,6 +19,8 @@ from ui.onboarding import render_onboarding
 from ui.daily_feed import render_daily_feed
 from ui.research_mode import render_research_mode
 from ui.profile_page import render_profile_page
+from ui.archive_page import render_archive_page
+from user.db import init_db, get_user, get_saved_papers 
 from ui.learning_mode import render_learning_mode, render_workspace_sidebar
 
 DB_PATH = "data/arxiv_rec.db"
@@ -63,11 +65,22 @@ if not index.is_loaded():
     st.stop()
 
 # -- route -----------------------------------------------------------------
+# -- route -----------------------------------------------------------------
 if not is_onboarded():
     render_onboarding(index, DB_PATH)
 else:
-    # --- Sidebar navigation ---
+    # 1. --- LEFT SIDEBAR (Native Navigation) ---
     with st.sidebar:
+        user_id = st.session_state["user_id"]
+        user_data = get_user(user_id) #
+
+        # Profile Image and Name
+        st.image("https://www.gravatar.com/avatar/0000?d=mp&f=y", width=60)
+        st.markdown(f"**{user_data['display_name']}**")
+        
+        if st.button("👤 User Profile", use_container_width=True):
+            st.session_state["overlay_page"] = "profile"
+        
         st.markdown(
             """<style>
             /* Sidebar nav buttons — bookmark style */
@@ -94,7 +107,17 @@ else:
         )
         profile_clicked = st.button("User Profile", use_container_width=True)
         st.divider()
-        if st.button("Log out", use_container_width=True):
+
+        if st.button("🔍 Explore Mode", use_container_width=True):
+            st.session_state["active_tab"] = "Daily Feed"
+            st.session_state.pop("overlay_page", None)
+            
+        if st.button("📂 Archive", use_container_width=True):
+            st.session_state["overlay_page"] = "archive"
+
+        # Spacer replacement for st.spacer
+        st.markdown("<br>" * 5, unsafe_allow_html=True) 
+        if st.button("🚪 Log out", use_container_width=True):
             logout_user()
             st.rerun()
 
@@ -144,8 +167,6 @@ else:
         st.session_state["overlay_page"] = "profile"
 
     overlay = st.session_state.get("overlay_page")
-
-    # --- Render overlay pages or main content ---
     if overlay == "profile":
         if st.button("← Back"):
             st.session_state.pop("overlay_page", None)
