@@ -8,6 +8,8 @@ from pipeline.runtime import configure_single_thread_runtime
 
 configure_single_thread_runtime()
 
+from pathlib import Path
+
 import streamlit as st
 
 from pipeline.index import PaperIndex
@@ -26,6 +28,11 @@ st.set_page_config(
     page_icon="📄",
     layout="centered",
 )
+
+# -- global stylesheet -----------------------------------------------------
+_css_path = Path(__file__).parent / "ui" / "style.css"
+if _css_path.exists():
+    st.markdown(f"<style>{_css_path.read_text()}</style>", unsafe_allow_html=True)
 
 
 @st.cache_resource

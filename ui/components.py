@@ -235,7 +235,7 @@ def paper_card(
     with st.container(border=True):
         title_text = " ".join(meta["title"].split())
         st.markdown(
-            f'<p style="font-size:2.0rem; font-weight:650; '
+            f'<p style="font-size:3.0rem; font-weight:650; '
             f'line-height:1.5; margin-bottom:0.30rem;">{title_text}</p>',
             unsafe_allow_html=True,
         )
