@@ -30,7 +30,8 @@ Command:
       --batch-size 8192 \
       --max-iter 100 \
       --random-state 42 \
-      --output-prefix data/kmeans_k700
+      --output-prefix data/kmeans_k700 \
+      --make-current  # promote the current k and generate relevant artifacts
 """
 
 from __future__ import annotations

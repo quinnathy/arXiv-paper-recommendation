@@ -8,7 +8,6 @@ and persisting the updated centroids.
 from __future__ import annotations
 
 import json
-import pickle
 from datetime import date
 from pathlib import Path
 
@@ -93,13 +92,35 @@ def _available_viz_artifact() -> dict | None:
     return None
 
 
-def _project_user_centroids_if_possible(artifact: dict, centroids: np.ndarray) -> np.ndarray | None:
-    if artifact["name"] != "UMAP":
+def _estimate_user_centroid_coords(
+    index: PaperIndex,
+    centroids: np.ndarray,
+    paper_indices: np.ndarray,
+    coords: np.ndarray,
+    neighbors: int = 25,
+) -> np.ndarray | None:
+    """Place user centroids near their closest sampled papers.
+
+    Calling ``UMAP.transform`` inside Streamlit can invoke numba/OpenMP native
+    code and has been observed to segfault in mixed scientific Python
+    environments. This approximation keeps the app stable while preserving the
+    useful visual intent: user centroids appear near their local neighborhood in
+    the sampled embedding map.
+    """
+    if centroids is None or len(paper_indices) == 0:
         return None
     try:
-        with open("data/diagnostics/umap_cluster_viz_model.pkl", "rb") as fh:
-            model = pickle.load(fh)
-        return model.transform(centroids).astype(np.float32)
+        sample_embeddings = np.asarray(index.embeddings[paper_indices], dtype=np.float32)
+        sims = sample_embeddings @ np.asarray(centroids, dtype=np.float32).T
+        k = min(neighbors, len(sample_embeddings))
+        centroid_coords = []
+        for centroid_col in range(sims.shape[1]):
+            top_idx = np.argpartition(sims[:, centroid_col], -k)[-k:]
+            top_sims = sims[top_idx, centroid_col]
+            weights = np.exp((top_sims - top_sims.max()) * 20.0)
+            weights = weights / np.maximum(weights.sum(), 1e-12)
+            centroid_coords.append((coords[top_idx] * weights[:, None]).sum(axis=0))
+        return np.asarray(centroid_coords, dtype=np.float32)
     except Exception:
         return None
 
@@ -164,7 +185,12 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
 
     centroid_coords = None
     if show_centroids and user_centroids is not None:
-        centroid_coords = _project_user_centroids_if_possible(artifact, user_centroids)
+        centroid_coords = _estimate_user_centroid_coords(
+            index=index,
+            centroids=user_centroids,
+            paper_indices=indices,
+            coords=coords,
+        )
 
     if not show_background:
         keep_indices: set[int] = set(served_indices or [])
@@ -189,7 +215,7 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
         fig.update_layout(title=f"{artifact_name} Paper Embedding Space")
         st.plotly_chart(fig, use_container_width=True)
         if show_centroids and centroid_coords is None:
-            st.caption("User centroids can be overlaid when UMAP artifacts include a fitted transformable model.")
+            st.caption("User centroids could not be placed on the current sampled map.")
         if viz_meta.get("explained_variance_ratio"):
             ratios = viz_meta["explained_variance_ratio"]
             st.caption(f"PCA explained variance: PC1 {ratios[0] * 100:.2f}%, PC2 {ratios[1] * 100:.2f}%.")
