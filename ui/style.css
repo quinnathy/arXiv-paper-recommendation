@@ -1,7 +1,5 @@
-/* 1. IMPORT FONTS */
 @import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap');
 
-/* 2. TITLES (Restoring the 'Journalism' look) */
 /* We target headers explicitly so they don't get lost */
 h1, h2, h3, [data-testid="stHeader"] {
     font-family: 'IM Fell English', serif !important;
@@ -9,7 +7,6 @@ h1, h2, h3, [data-testid="stHeader"] {
     color: #1a1a1a !important;
 }
 
-/* 3. BODY TEXT (Newsreader) */
 /* We only target standard text elements. 
    We EXCLUDE anything related to 'material' or 'icon' */
 p, li, label, .st-key-tag- p {
@@ -17,7 +14,6 @@ p, li, label, .st-key-tag- p {
     font-size: 1.1rem !important;
 }
 
-/* 4. THE ICON PROTECTOR (The "Ghost Text" Killer) */
 /* This forces the browser to treat those strings as shapes, not Newsreader text */
 .material-icons, 
 .material-symbols-outlined, 
@@ -30,7 +26,6 @@ span:has(svg),
     text-transform: none !important;
 }
 
-/* 5. SIDEBAR & BUTTON STRUCTURE (Operation Snag & Drop Ready) */
 div.stButton > button {
     border-radius: 20px !important;
     padding: 5px 15px !important;
