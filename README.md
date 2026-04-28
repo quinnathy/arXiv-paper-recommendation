@@ -130,11 +130,23 @@ pip install -r requirements.txt
 
 ### 2. Run the offline pipeline
 
-This downloads the arXiv dataset, embeds papers, and clusters them. Use `--limit` for faster dev iterations:
+This downloads the full arXiv dataset first, then samples/filters papers, embeds them, and clusters them. Use `--limit` for faster dev iterations:
 
 ```bash
 # Development (fast, ~5 min on CPU)
 python scripts/run_offline_pipeline.py --limit 50000
+
+# Development with deterministic random sampling (same seed => same paper set)
+python scripts/run_offline_pipeline.py --limit 50000 --seed 42
+
+# Category-constrained sampling (supports top-level categories like cs/math/qfin)
+python scripts/run_offline_pipeline.py --limit 50000 --categories cs,math,qfin --seed 42
+
+# Category-constrained sampling by sub-categories (also supported)
+python scripts/run_offline_pipeline.py --limit 50000 --categories cs.LG,cs.CV --seed 42
+
+# Optional: use a CN Hugging Face mirror (default remains huggingface.co)
+python scripts/run_offline_pipeline.py --limit 50000 --hf-endpoint https://hf-mirror.com --disable-hf-transfer
 
 # Full dataset (~4 hours on GPU, overnight on CPU)
 python scripts/run_offline_pipeline.py
