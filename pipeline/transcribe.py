@@ -43,7 +43,7 @@ def get_paper_markdown(arxiv_id, use_mock=True):
             In production, Marker would analyze the columns and equations here.
 
             ## Sample Equation
-            $L = \\sum_{i=1}^{n} (y_i - \\hat{y}_i)^2$
+            $L = \\sum_{{i=1}}^{{n}} (y_i - \\hat{{y}}_i)^2$
 
             ## Notes
             You can copy this text and paste it into your **Infinite Wall** on the right!

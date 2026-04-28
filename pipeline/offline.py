@@ -168,7 +168,7 @@ def run(
     with open(json_file, "r", encoding="utf-8") as fh:
         for line in fh:
             record = json.loads(line)
-            title = record.get("title", "").strip()
+            title = " ".join(record.get("title", "").split())
             abstract = record.get("abstract", "").strip()
             if not title or not abstract:
                 continue

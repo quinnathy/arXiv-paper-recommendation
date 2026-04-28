@@ -15,7 +15,7 @@ from pipeline.index import PaperIndex
 from recommender.engine import recommend
 from user.db import get_user, get_seen_ids, log_feedback, update_centroids
 from user.profile import apply_feedback
-from user.session import save_centroids_to_session
+from user.session import logout_user, save_centroids_to_session
 from ui.components import paper_card
 
 
@@ -66,20 +66,30 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
 
     with st.sidebar:
         st.write(f"**{user['display_name']}**")
+        if user.get("username"):
+            st.caption(f"@{user['username']}")
         created = user["created_at"][:10] if user["created_at"] else ""
         st.caption(f"Member since {created}")
         seen = get_seen_ids(user_id)
         st.metric("Papers seen", len(seen))
         st.metric("Research threads", user["k_u"])
         st.metric("Diversity", f"{user['diversity']:.1f}")
+        if st.button("Log out"):
+            logout_user()
+            st.rerun()
+
+    if "shown_ids" not in st.session_state:
+        st.session_state["shown_ids"] = set()
 
     if "todays_recs" not in st.session_state:
         centroids = st.session_state["user_centroids"]
         diversity = st.session_state["user_diversity"]
         seen_ids = get_seen_ids(user_id)
+        excluded_ids = seen_ids | st.session_state["shown_ids"]
         with st.spinner("Finding your papers..."):
-            recs = recommend(centroids, seen_ids, index, diversity=diversity, n=5)
+            recs = recommend(centroids, excluded_ids, index, diversity=diversity, n=5)
         st.session_state["todays_recs"] = recs
+        st.session_state["shown_ids"].update(r["id"] for r in recs)
 
     if "responded" not in st.session_state:
         st.session_state["responded"] = set()
@@ -87,7 +97,12 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     recs = st.session_state["todays_recs"]
 
     if not recs:
-        st.info("You've seen most papers in your areas — come back tomorrow.")
+        st.info("You've explored all available papers in your areas for this session.")
+        if st.button("Reset and start fresh"):
+            st.session_state["shown_ids"] = set()
+            st.session_state.pop("todays_recs", None)
+            st.session_state.pop("responded", None)
+            st.rerun()
         return
     if len(recs) < 5:
         st.warning("You've seen most papers in your areas. Here's what we found:")

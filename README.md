@@ -21,7 +21,7 @@ The system has two phases: an **offline batch pipeline** that runs once (or nigh
 
 #### 2. User Personalization
 
-- **Cold start (multi-vector)** — A new user selects topics of interest. Optionally, they can paste a Google Scholar profile URL; the system fetches their publications and embeds them via SPECTER2. All seed vectors (category centroids + optional paper embeddings) are clustered with KMeans into `k_u` centroids (1-3), where `k_u = min(3, number of selected topics)`. Each centroid represents a distinct research thread.
+- **Cold start (multi-vector)** — A new user selects human-readable topics of interest. Each onboarding topic can expand to one or more available arXiv category centroids, and unavailable categories are skipped for the current corpus. Optional concept tags, free-text interests, and Scholar publications add additional seed vectors. Weighted seeds are grouped with threshold-based agglomerative initialization into 1-3 centroids, so `k_u` is inferred from seed geometry instead of the raw number of expanded arXiv categories. Each centroid represents a distinct research thread.
 - **Diversity slider (delta)** — During onboarding the user sets delta (0.0-1.0), which controls how broadly recommendations spread. Lower values focus on the user's strongest interest; higher values explore more broadly.
 - **Feedback loop** — Each like, save, or skip updates only the **nearest centroid** via Exponential Moving Average (EMA):
 
