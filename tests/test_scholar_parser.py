@@ -10,16 +10,12 @@ To skip them:
 
 from __future__ import annotations
 
-from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
 from pipeline.scholar_parser import (
-    _extract_profile_name,
-    _is_first_author,
-    _normalize_last_name,
     fetch_scholar_papers,
     filter_papers,
     load_scholar_papers,
@@ -127,74 +123,6 @@ class TestParseScholarUrl:
 
 
 # ===================================================================
-# _extract_profile_name
-# ===================================================================
-
-class TestExtractProfileName:
-
-    def test_from_bs4_soup(self):
-        from bs4 import BeautifulSoup as BS4
-        soup = BS4(MOCK_SCHOLAR_HTML, "html.parser")
-        assert _extract_profile_name(soup) == "Jane Smith"
-
-    def test_from_raw_html(self):
-        assert _extract_profile_name(MOCK_SCHOLAR_HTML) == "Jane Smith"
-
-    def test_missing_element(self):
-        assert _extract_profile_name("<html><body></body></html>") == ""
-
-
-# ===================================================================
-# _normalize_last_name
-# ===================================================================
-
-class TestNormalizeLastName:
-
-    def test_simple_name(self):
-        assert _normalize_last_name("John Smith") == "smith"
-
-    def test_comma_format(self):
-        assert _normalize_last_name("Smith, J.") == "smith"
-
-    def test_single_name(self):
-        assert _normalize_last_name("Smith") == "smith"
-
-    def test_abbreviated_first(self):
-        assert _normalize_last_name("J Smith") == "smith"
-
-    def test_empty_string(self):
-        assert _normalize_last_name("") == ""
-
-    def test_hyphenated_last_name(self):
-        assert _normalize_last_name("Marie Curie-Smith") == "curie-smith"
-
-
-# ===================================================================
-# _is_first_author
-# ===================================================================
-
-class TestIsFirstAuthor:
-
-    def test_match(self):
-        assert _is_first_author("Jane Smith", "J Smith, A Johnson") is True
-
-    def test_no_match(self):
-        assert _is_first_author("Jane Smith", "A Johnson, J Smith") is False
-
-    def test_empty_authors(self):
-        assert _is_first_author("Jane Smith", "") is False
-
-    def test_empty_profile_name(self):
-        assert _is_first_author("", "J Smith, A Johnson") is False
-
-    def test_single_author(self):
-        assert _is_first_author("Jane Smith", "J Smith") is True
-
-    def test_case_insensitive(self):
-        assert _is_first_author("JANE SMITH", "j smith, other") is True
-
-
-# ===================================================================
 # fetch_scholar_papers
 # ===================================================================
 
@@ -204,9 +132,7 @@ class TestFetchScholarPapers:
     def test_extracts_all_fields(self, mock_get):
         mock_get.return_value = _mock_response()
 
-        papers, profile_name = fetch_scholar_papers("abc123")
-
-        assert profile_name == "Jane Smith"
+        papers = fetch_scholar_papers("abc123")
         assert len(papers) == 4
 
         p = papers[0]
@@ -221,7 +147,7 @@ class TestFetchScholarPapers:
     def test_empty_citations_parsed_as_zero(self, mock_get):
         mock_get.return_value = _mock_response()
 
-        papers, _ = fetch_scholar_papers("abc123")
+        papers = fetch_scholar_papers("abc123")
         # Paper 4 ("Old Unpopular Paper") has empty citation text
         assert papers[3]["citations"] == 0
 
@@ -229,7 +155,7 @@ class TestFetchScholarPapers:
     def test_max_papers_limit(self, mock_get):
         mock_get.return_value = _mock_response()
 
-        papers, _ = fetch_scholar_papers("abc123", max_papers=2)
+        papers = fetch_scholar_papers("abc123", max_papers=2)
         assert len(papers) == 2
 
     @patch("pipeline.scholar_parser.requests.get")
@@ -246,7 +172,7 @@ class TestFetchScholarPapers:
     def test_abstract_always_empty(self, mock_get):
         mock_get.return_value = _mock_response()
 
-        papers, _ = fetch_scholar_papers("abc123")
+        papers = fetch_scholar_papers("abc123")
         assert all(p["abstract"] == "" for p in papers)
 
     @patch("pipeline.scholar_parser.requests.get")
@@ -275,98 +201,101 @@ class TestFilterPapers:
             "abstract": "",
         }
 
-    @patch("pipeline.scholar_parser.datetime")
-    def test_citation_filter(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
-        papers = [self._paper("High Cite", citations=50, year=2010)]
-        result = filter_papers(papers, "Nobody")
-        assert len(result) == 1
-        assert result[0]["title"] == "High Cite"
-
-    @patch("pipeline.scholar_parser.datetime")
-    def test_recent_year_filter(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
-        # cutoff_year = 2021, so year=2022 qualifies
-        papers = [self._paper("Recent", citations=0, year=2022)]
-        result = filter_papers(papers, "Nobody")
-        assert len(result) == 1
-
-    @patch("pipeline.scholar_parser.datetime")
-    def test_year_exactly_at_cutoff(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
-        # cutoff_year = 2021, year=2021 should pass (>=)
-        papers = [self._paper("Cutoff", citations=0, year=2021)]
-        result = filter_papers(papers, "Nobody")
-        assert len(result) == 1
-
-    @patch("pipeline.scholar_parser.datetime")
-    def test_year_just_below_cutoff(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
-        # cutoff_year = 2021, year=2020 should NOT pass via year condition
-        papers = [self._paper("Old", citations=0, year=2020)]
-        result = filter_papers(papers, "Nobody")
-        # Falls back to returning all papers since nothing matched
-        assert len(result) == 1
-
-    @patch("pipeline.scholar_parser.datetime")
-    def test_first_author_filter(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
-        papers = [self._paper("FA", authors="J Smith, Other", citations=0, year=2010)]
-        result = filter_papers(papers, "Jane Smith")
-        assert len(result) == 1
-
-    @patch("pipeline.scholar_parser.datetime")
-    def test_no_condition_met_uses_fallback(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
+    def test_selects_top_cited_and_top_recent(self):
         papers = [
-            self._paper("A", citations=0, year=2010),
-            self._paper("B", citations=5, year=2015),
+            self._paper("High Cite 1", citations=100, year=2010),
+            self._paper("High Cite 2", citations=80, year=2011),
+            self._paper("High Cite 3", citations=60, year=2012),
+            self._paper("Recent 1", citations=10, year=2026),
+            self._paper("Recent 2", citations=5, year=2025),
+            self._paper("Recent 3", citations=1, year=2024),
+            self._paper("Other", citations=0, year=2000),
         ]
-        result = filter_papers(papers, "Nobody")
-        # Fallback: return all (both fail all 3 conditions)
-        assert len(result) == 2
+        result = filter_papers(papers)
 
-    @patch("pipeline.scholar_parser.datetime")
-    def test_max_n_enforced(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
-        papers = [self._paper(f"P{i}", citations=100, year=2025) for i in range(30)]
-        result = filter_papers(papers, "Nobody", max_n=10)
-        assert len(result) == 10
+        assert [p["title"] for p in result] == [
+            "High Cite 1",
+            "High Cite 2",
+            "High Cite 3",
+            "Recent 1",
+            "Recent 2",
+            "Recent 3",
+        ]
 
-    @patch("pipeline.scholar_parser.datetime")
-    def test_sorted_by_citations_when_trimming(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
+    def test_deduplicates_overlap_between_rankings(self):
         papers = [
-            self._paper("Low", citations=25, year=2025),
-            self._paper("High", citations=500, year=2025),
-            self._paper("Mid", citations=100, year=2025),
+            self._paper("Paper A", citations=100, year=2026),
+            self._paper("Paper B", citations=80, year=2025),
+            self._paper("Paper C", citations=60, year=2024),
+            self._paper("Paper D", citations=1, year=2023),
         ]
-        result = filter_papers(papers, "Nobody", max_n=2)
-        assert result[0]["title"] == "High"
-        assert result[1]["title"] == "Mid"
+        result = filter_papers(papers)
 
-    @patch("pipeline.scholar_parser.datetime")
-    def test_empty_input(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
-        assert filter_papers([], "Nobody") == []
+        assert [p["title"] for p in result] == ["Paper A", "Paper B", "Paper C"]
 
-    @patch("pipeline.scholar_parser.datetime")
-    def test_mixed_conditions(self, mock_dt):
-        """Papers matching different conditions are all included."""
-        mock_dt.now.return_value = datetime(2026, 1, 1)
+    def test_deduplicates_titles_case_insensitively(self):
         papers = [
-            self._paper("HighCite", citations=50, year=2010),           # citation
-            self._paper("Recent", citations=0, year=2024),              # year
-            self._paper("FirstAuth", authors="J Doe", citations=0, year=2010),  # first author
-            self._paper("Nothing", citations=0, year=2010),             # none
+            self._paper("Paper A", citations=100, year=2020),
+            self._paper("Paper B", citations=80, year=2019),
+            self._paper("Paper C", citations=60, year=2018),
+            self._paper(" paper   a ", citations=0, year=2026),
+            self._paper("Paper D", citations=0, year=2025),
+            self._paper("Paper E", citations=0, year=2024),
         ]
-        result = filter_papers(papers, "Jane Doe")
-        titles = {p["title"] for p in result}
-        assert "HighCite" in titles
-        assert "Recent" in titles
-        assert "FirstAuth" in titles
-        # "Nothing" only appears via fallback, but since 3 papers passed, no fallback
-        assert "Nothing" not in titles
+        result = filter_papers(papers)
+
+        assert [p["title"] for p in result] == [
+            "Paper A",
+            "Paper B",
+            "Paper C",
+            "Paper D",
+            "Paper E",
+        ]
+
+    def test_max_n_applies_to_each_ranking(self):
+        papers = [
+            self._paper("Cited 1", citations=100, year=2010),
+            self._paper("Cited 2", citations=80, year=2011),
+            self._paper("Cited 3", citations=60, year=2012),
+            self._paper("Recent 1", citations=10, year=2026),
+            self._paper("Recent 2", citations=5, year=2025),
+            self._paper("Recent 3", citations=1, year=2024),
+        ]
+        result = filter_papers(papers, max_n=2)
+
+        assert [p["title"] for p in result] == [
+            "Cited 1",
+            "Cited 2",
+            "Recent 1",
+            "Recent 2",
+        ]
+
+    def test_ties_keep_original_order(self):
+        papers = [
+            self._paper("A", citations=10, year=2020),
+            self._paper("B", citations=10, year=2020),
+            self._paper("C", citations=10, year=2020),
+            self._paper("D", citations=0, year=2019),
+        ]
+        result = filter_papers(papers)
+
+        assert [p["title"] for p in result] == ["A", "B", "C"]
+
+    def test_first_author_status_does_not_affect_selection(self):
+        papers = [
+            self._paper("First Author", authors="J Smith", citations=0, year=2000),
+            self._paper("Highly Cited", authors="Other", citations=100, year=1999),
+            self._paper("Most Recent", authors="Other", citations=0, year=2026),
+        ]
+        result = filter_papers(papers, max_n=1)
+
+        assert [p["title"] for p in result] == ["Highly Cited", "Most Recent"]
+
+    def test_empty_input(self):
+        assert filter_papers([]) == []
+
+    def test_zero_max_n_returns_empty_list(self):
+        assert filter_papers([self._paper("A", citations=1, year=2026)], max_n=0) == []
 
 
 # ===================================================================
@@ -375,10 +304,8 @@ class TestFilterPapers:
 
 class TestLoadScholarPapersE2E:
 
-    @patch("pipeline.scholar_parser.datetime")
     @patch("pipeline.scholar_parser.requests.get")
-    def test_happy_path(self, mock_get, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 1, 1)
+    def test_happy_path(self, mock_get):
         mock_get.return_value = _mock_response()
 
         result = load_scholar_papers(
@@ -386,7 +313,11 @@ class TestLoadScholarPapersE2E:
         )
         assert result is not None
         assert isinstance(result, list)
-        assert len(result) > 0
+        assert [p["title"] for p in result] == [
+            "Deep Learning for NLP",
+            "Attention Mechanisms Survey",
+            "Transformer Optimization",
+        ]
         assert all("title" in p and "abstract" in p for p in result)
 
     def test_invalid_url_returns_none(self):
@@ -410,11 +341,9 @@ class TestLoadScholarPapersE2E:
         )
         assert result is None
 
-    @patch("pipeline.scholar_parser.datetime")
     @patch("pipeline.scholar_parser.requests.get")
-    def test_only_one_http_request(self, mock_get, mock_dt):
-        """No Semantic Scholar calls — exactly 1 HTTP request."""
-        mock_dt.now.return_value = datetime(2026, 1, 1)
+    def test_only_one_http_request(self, mock_get):
+        """No Semantic Scholar calls; exactly 1 HTTP request."""
         mock_get.return_value = _mock_response()
 
         load_scholar_papers(
@@ -454,11 +383,11 @@ class TestLiveScholarProfiles:
 
         # --- Step 1: Fetch ---
         t0 = _time.perf_counter()
-        papers_raw, profile_name = fetch_scholar_papers(user_id)
+        papers_raw = fetch_scholar_papers(user_id)
         t_fetch = _time.perf_counter() - t0
 
         print(f"\n{'='*70}")
-        print(f"Profile: {profile_name}  (user={user_id})")
+        print(f"Profile user: {user_id}")
         print(f"URL:     {url}")
         print(f"Fetch time: {t_fetch:.2f}s")
         print(f"Papers scraped: {len(papers_raw)}")
@@ -471,20 +400,18 @@ class TestLiveScholarProfiles:
 
         # --- Step 2: Filter ---
         t1 = _time.perf_counter()
-        papers_filtered = filter_papers(papers_raw, profile_name)
+        papers_filtered = filter_papers(papers_raw)
         t_filter = _time.perf_counter() - t1
 
         print(f"\n{'='*70}")
         print(f"FILTERED: {len(papers_filtered)} / {len(papers_raw)} papers  "
               f"(filter time: {t_filter*1000:.1f}ms)")
-        print(f"Filter criteria: citations>20 OR year>={datetime.now().year - 5} "
-              f"OR first_author='{profile_name}'")
+        print("Filter criteria: top 3 by citations plus top 3 by year")
         print(f"{'-'*70}")
-        print(f"{'#':<4} {'Year':<6} {'Cites':<7} {'1stAuth?':<10} Title")
+        print(f"{'#':<4} {'Year':<6} {'Cites':<7} Title")
         print(f"{'-'*70}")
         for i, p in enumerate(papers_filtered, 1):
-            is_fa = _is_first_author(profile_name, p["authors"])
-            print(f"{i:<4} {p['year']:<6} {p['citations']:<7} {'YES' if is_fa else 'no':<10} {p['title'][:60]}")
+            print(f"{i:<4} {p['year']:<6} {p['citations']:<7} {p['title'][:60]}")
 
         # --- Step 3: End-to-end via load_scholar_papers ---
         t2 = _time.perf_counter()
@@ -497,9 +424,8 @@ class TestLiveScholarProfiles:
 
         # --- Assertions ---
         assert papers_raw, "Should scrape at least 1 paper"
-        assert profile_name, "Should extract a profile name"
         assert papers_filtered, "Should have at least 1 filtered paper"
-        assert len(papers_filtered) <= 15, f"Should cap at 15, got {len(papers_filtered)}"
+        assert len(papers_filtered) <= 6, f"Should cap at 6, got {len(papers_filtered)}"
         assert result is not None, "load_scholar_papers should succeed"
         assert all("title" in p and "abstract" in p for p in result), (
             "Every paper must have 'title' and 'abstract' keys"
