@@ -18,6 +18,11 @@ import numpy as np
 
 from pipeline.embed import EmbeddingModel
 from pipeline.cluster import fit_kmeans, compute_category_centroids
+from diagnostics.embedding_viz import (
+    generate_pca_visualization,
+    generate_umap_visualization,
+)
+from diagnostics.kmeans import DEFAULT_K_VALUES, run_k_sweep
 
 
 def _normalize_requested_category(category: str) -> str:
@@ -119,6 +124,15 @@ def run(
     data_dir: str = "data",
     seed: int = 42,
     categories: list[str] | None = None,
+    kmeans_batch_size: int = 4096,
+    kmeans_max_iter: int = 100,
+    run_kmeans_diagnostics: bool = False,
+    kmeans_diagnostic_k_values: list[int] | None = None,
+    kmeans_diagnostic_sample_size: int = 200_000,
+    run_pca_viz: bool = False,
+    run_umap_viz: bool = False,
+    viz_sample_size: int = 50_000,
+    viz_color_by: str = "primary_category",
 ) -> None:
     """Execute the full offline pipeline.
 
@@ -132,6 +146,10 @@ def run(
             When set with limit, sampling only draws papers that include at least
             one of these categories. Supports both top-level categories (e.g.
             "cs", "math", "q-fin"/"qfin") and exact sub-categories (e.g. "cs.LG").
+        run_kmeans_diagnostics: Run the K sweep diagnostics after artifacts save.
+        run_pca_viz: Generate PCA embedding visualization diagnostics.
+        run_umap_viz: Generate UMAP embedding visualization diagnostics if
+            umap-learn is installed.
     """
     os.makedirs(data_dir, exist_ok=True)
     if categories:
@@ -218,7 +236,13 @@ def run(
     # ── Step 4: Cluster + category centroids ─────────────────────────────
     t3 = time.time()
     print("Step 4/6: Clustering...")
-    cluster_ids, centroids = fit_kmeans(embeddings, k)
+    cluster_ids, centroids = fit_kmeans(
+        embeddings,
+        k,
+        batch_size=kmeans_batch_size,
+        max_iter=kmeans_max_iter,
+        random_state=seed,
+    )
     print(f"  Clusters: {centroids.shape[0]}, centroids shape: {centroids.shape}")
 
     print("  Computing category centroids...")
@@ -247,6 +271,46 @@ def run(
             fh.write(json.dumps(paper) + "\n")
 
     print(f"  Saved to {data_dir}/  ({time.time() - t5:.1f}s)")
+
+    diagnostics_dir = Path(data_dir) / "diagnostics"
+    if run_kmeans_diagnostics:
+        print("Optional: running k-means K sweep diagnostics...")
+        payload = run_k_sweep(
+            data_dir=data_dir,
+            diagnostics_dir=diagnostics_dir,
+            k_values=kmeans_diagnostic_k_values or DEFAULT_K_VALUES,
+            sample_size=kmeans_diagnostic_sample_size,
+            batch_size=max(kmeans_batch_size, 8192),
+            max_iter=kmeans_max_iter,
+            random_state=seed,
+        )
+        print(f"  K diagnostics saved: {payload['paths']['json']}")
+
+    if run_pca_viz:
+        print("Optional: generating PCA visualization artifacts...")
+        payload = generate_pca_visualization(
+            data_dir=data_dir,
+            diagnostics_dir=diagnostics_dir,
+            sample_size=viz_sample_size,
+            random_state=seed,
+            color_by=viz_color_by,
+        )
+        print(f"  PCA visualization saved: {payload['paths']['html']}")
+
+    if run_umap_viz:
+        print("Optional: generating UMAP visualization artifacts...")
+        try:
+            payload = generate_umap_visualization(
+                data_dir=data_dir,
+                diagnostics_dir=diagnostics_dir,
+                sample_size=viz_sample_size,
+                random_state=seed,
+                color_by=viz_color_by,
+            )
+            print(f"  UMAP visualization saved: {payload['paths']['html']}")
+        except RuntimeError as exc:
+            print(f"  Skipping UMAP visualization: {exc}")
+
     print(f"\nPipeline complete. Total time: {time.time() - t0:.1f}s")
     print(f"  embeddings: {embeddings.shape}  ({embeddings.nbytes / 1e6:.1f} MB)")
     print(f"  centroids:  {centroids.shape}")
