@@ -30,7 +30,7 @@ EMA_ALPHA: float = 0.15
 # Agglomerative grouping defaults
 # ---------------------------------------------------------------------------
 
-MERGE_THRESHOLD: float = 0.22
+MERGE_THRESHOLD: float = 0.05
 MAX_THREADS: int = 3
 CORE_SPLIT_POWER: float = 0.6
 
@@ -79,12 +79,14 @@ class ProfileInitializationResult:
             shape (n_seeds,).
         thread_weights: Normalized per-thread weights, shape (k_u,).
         thread_labels: Human-readable label for each thread.
+        debug: Optional diagnostic data. ``None`` unless debug mode is enabled.
     """
 
     centroids: np.ndarray
     seed_labels: np.ndarray
     thread_weights: np.ndarray
     thread_labels: list[str]
+    debug: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -175,19 +177,27 @@ def _effective_weight(seed: SeedSignal) -> float:
     return seed.weight * seed.reliability * seed.specificity
 
 
+def _pairwise_distance_matrix(seeds: list[SeedSignal]) -> np.ndarray:
+    if not seeds:
+        return np.empty((0, 0), dtype=np.float32)
+    X = _normalize_rows(np.stack([s.vector for s in seeds]))
+    return (1.0 - X @ X.T).astype(np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Agglomerative threshold grouping
 # ---------------------------------------------------------------------------
 
-def _threshold_agglomerative_grouping(
+def threshold_agglomerative_grouping(
     seeds: list[SeedSignal],
     merge_threshold: float = MERGE_THRESHOLD,
     max_threads: int = MAX_THREADS,
-) -> list[list[int]]:
+    debug: bool = False,
+) -> list[list[int]] | tuple[list[list[int]], dict]:
     """Group seed indices via agglomerative merging on cosine distance.
 
     Returns a list of groups, where each group is a list of indices into
-    *seeds*.
+    *seeds*.  When ``debug=True``, returns ``(groups, debug_info)``.
     """
     groups: list[dict] = [
         {
@@ -206,6 +216,40 @@ def _threshold_agglomerative_grouping(
     def _dist(ga: dict, gb: dict) -> float:
         return 1.0 - float(_centroid(ga) @ _centroid(gb))
 
+    debug_info: dict = {
+        "pairwise_seed_distance_matrix": _pairwise_distance_matrix(seeds),
+        "merge_history": [],
+        "phase1_threshold_merges": 0,
+        "phase2_forced_max_threads_merges": 0,
+    }
+
+    def _labels(g: dict) -> list[str]:
+        return [seeds[i].label for i in g["indices"]]
+
+    def _merge_groups(i: int, j: int, *, phase: str, distance: float) -> None:
+        left_labels = _labels(groups[i])
+        right_labels = _labels(groups[j])
+        merged_labels = left_labels + right_labels
+        if debug:
+            debug_info["merge_history"].append(
+                {
+                    "phase": phase,
+                    "distance": float(distance),
+                    "threshold": float(merge_threshold),
+                    "left_group_labels": left_labels,
+                    "right_group_labels": right_labels,
+                    "merged_group_labels": merged_labels,
+                }
+            )
+            if phase == "phase1_threshold":
+                debug_info["phase1_threshold_merges"] += 1
+            elif phase == "phase2_forced_max_threads":
+                debug_info["phase2_forced_max_threads_merges"] += 1
+        groups[i]["indices"].extend(groups[j]["indices"])
+        groups[i]["vectors"].extend(groups[j]["vectors"])
+        groups[i]["weights"].extend(groups[j]["weights"])
+        del groups[j]
+
     # Phase 1: merge groups closer than threshold.
     while len(groups) > 1:
         best_pair = None
@@ -219,10 +263,12 @@ def _threshold_agglomerative_grouping(
         if best_pair is None or best_dist > merge_threshold:
             break
         i, j = best_pair
-        groups[i]["indices"].extend(groups[j]["indices"])
-        groups[i]["vectors"].extend(groups[j]["vectors"])
-        groups[i]["weights"].extend(groups[j]["weights"])
-        del groups[j]
+        _merge_groups(
+            i,
+            j,
+            phase="phase1_threshold",
+            distance=best_dist,
+        )
 
     # Phase 2: enforce max_threads.
     while len(groups) > max_threads:
@@ -237,12 +283,36 @@ def _threshold_agglomerative_grouping(
         if best_pair is None:
             break
         i, j = best_pair
-        groups[i]["indices"].extend(groups[j]["indices"])
-        groups[i]["vectors"].extend(groups[j]["vectors"])
-        groups[i]["weights"].extend(groups[j]["weights"])
-        del groups[j]
+        _merge_groups(
+            i,
+            j,
+            phase="phase2_forced_max_threads",
+            distance=best_dist,
+        )
 
-    return [g["indices"] for g in groups]
+    final_groups = [g["indices"] for g in groups]
+    debug_info["final_groups"] = final_groups
+    debug_info["final_group_labels"] = [
+        [seeds[i].label for i in grp] for grp in final_groups
+    ]
+    if debug:
+        return final_groups, debug_info
+    return final_groups
+
+
+def _threshold_agglomerative_grouping(
+    seeds: list[SeedSignal],
+    merge_threshold: float = MERGE_THRESHOLD,
+    max_threads: int = MAX_THREADS,
+    debug: bool = False,
+) -> list[list[int]] | tuple[list[list[int]], dict]:
+    """Backward-compatible private wrapper for threshold grouping."""
+    return threshold_agglomerative_grouping(
+        seeds,
+        merge_threshold=merge_threshold,
+        max_threads=max_threads,
+        debug=debug,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -254,6 +324,7 @@ def init_user_profile_v2(
     max_threads: int = MAX_THREADS,
     merge_threshold: float = MERGE_THRESHOLD,
     core_split_power: float = CORE_SPLIT_POWER,
+    debug: bool = False,
 ) -> ProfileInitializationResult:
     """Initialize user centroids from weighted seed signals.
 
@@ -270,6 +341,7 @@ def init_user_profile_v2(
         max_threads: Maximum number of user centroids.
         merge_threshold: Cosine distance threshold for merging groups.
         core_split_power: Minimum ``split_power`` to be a core seed.
+        debug: If true, attach diagnostic details to the result.
 
     Returns:
         ProfileInitializationResult with centroids, per-seed integer thread
@@ -280,11 +352,24 @@ def init_user_profile_v2(
 
     if len(seeds) == 1:
         s = seeds[0]
+        debug_info = None
+        if debug:
+            debug_info = {
+                "pairwise_seed_distance_matrix": _pairwise_distance_matrix(seeds),
+                "core_seed_labels": [s.label],
+                "support_seed_labels": [],
+                "merge_history": [],
+                "phase1_threshold_merges": 0,
+                "phase2_forced_max_threads_merges": 0,
+                "final_labels": np.array([0], dtype=int),
+                "final_thread_weights": np.array([1.0]),
+            }
         return ProfileInitializationResult(
             centroids=s.vector.astype(np.float32).reshape(1, -1),
             seed_labels=np.array([0], dtype=int),
             thread_weights=np.array([1.0]),
             thread_labels=[s.label],
+            debug=debug_info,
         )
 
     # 1. Partition core vs support.
@@ -297,13 +382,45 @@ def init_user_profile_v2(
         support_idx = []
 
     core_seeds = [seeds[i] for i in core_idx]
+    debug_info: dict | None = None
+    if debug:
+        debug_info = {
+            "pairwise_seed_distance_matrix": _pairwise_distance_matrix(seeds),
+            "core_seed_labels": [seeds[i].label for i in core_idx],
+            "support_seed_labels": [seeds[i].label for i in support_idx],
+            "merge_history": [],
+            "phase1_threshold_merges": 0,
+            "phase2_forced_max_threads_merges": 0,
+            "final_labels": None,
+            "final_thread_weights": None,
+        }
 
     # 2. Agglomerative grouping on core seeds only.
-    core_groups = _threshold_agglomerative_grouping(
+    grouping_result = _threshold_agglomerative_grouping(
         core_seeds,
         merge_threshold=merge_threshold,
         max_threads=max_threads,
+        debug=debug,
     )
+    if debug:
+        core_groups, grouping_debug = grouping_result
+        if debug_info is not None:
+            debug_info["merge_history"] = grouping_debug["merge_history"]
+            debug_info["phase1_threshold_merges"] = grouping_debug[
+                "phase1_threshold_merges"
+            ]
+            debug_info["phase2_forced_max_threads_merges"] = grouping_debug[
+                "phase2_forced_max_threads_merges"
+            ]
+            debug_info["core_pairwise_seed_distance_matrix"] = grouping_debug[
+                "pairwise_seed_distance_matrix"
+            ]
+            debug_info["core_final_groups"] = grouping_debug["final_groups"]
+            debug_info["core_final_group_labels"] = grouping_debug[
+                "final_group_labels"
+            ]
+    else:
+        core_groups = grouping_result
 
     # Build group centroids from core seeds for support-seed assignment.
     all_vectors = np.stack([s.vector for s in seeds])
@@ -352,12 +469,33 @@ def init_user_profile_v2(
 
     tw = np.array(thread_weights_raw)
     tw = tw / tw.sum()
+    if debug_info is not None:
+        debug_info["final_labels"] = seed_labels.copy()
+        debug_info["final_thread_weights"] = tw.copy()
 
     return ProfileInitializationResult(
         centroids=centroids_arr,
         seed_labels=seed_labels,
         thread_weights=tw,
         thread_labels=thread_labels,
+        debug=debug_info,
+    )
+
+
+def initialize_user_centroids_threshold(
+    seeds: list[SeedSignal],
+    max_threads: int = MAX_THREADS,
+    merge_threshold: float = MERGE_THRESHOLD,
+    core_split_power: float = CORE_SPLIT_POWER,
+    debug: bool = False,
+) -> ProfileInitializationResult:
+    """Compatibility alias for threshold-based user centroid initialization."""
+    return init_user_profile_v2(
+        seeds,
+        max_threads=max_threads,
+        merge_threshold=merge_threshold,
+        core_split_power=core_split_power,
+        debug=debug,
     )
 
 
