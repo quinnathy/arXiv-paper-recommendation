@@ -338,6 +338,48 @@ def get_seen_ids(user_id: str) -> set[str]:
 
     return {row[0] for row in rows}
 
+
+def get_saved_papers(user_id: str) -> list[dict]:
+    """Get all papers this user saved, newest first.
+
+    Returns:
+        List of dicts with keys: arxiv_id, score, created_at.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT arxiv_id, score, created_at FROM feedback "
+        "WHERE user_id = ? AND signal = 'save' "
+        "ORDER BY created_at DESC",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+
+    return [
+        {"arxiv_id": r[0], "score": r[1], "created_at": r[2]}
+        for r in rows
+    ]
+
+
+def get_feedback_counts(user_id: str) -> dict[str, int]:
+    """Get counts of each feedback type for a user.
+
+    Returns:
+        Dict with keys 'like', 'save', 'skip' mapped to counts.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT signal, COUNT(*) FROM feedback "
+        "WHERE user_id = ? GROUP BY signal",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+
+    counts = {"like": 0, "save": 0, "skip": 0}
+    for signal, count in rows:
+        counts[signal] = count
+    return counts
+
+
 # research mode
 def save_research_note(user_id: str, content: str, source_arxiv_id: str = None):
     now = datetime.now(timezone.utc).isoformat()

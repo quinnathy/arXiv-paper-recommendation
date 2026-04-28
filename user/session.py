@@ -101,6 +101,7 @@ def logout_user() -> None:
         "todays_recs",
         "responded",
         "shown_ids",
+        "overlay_page",
     ):
         st.session_state.pop(key, None)
     load_or_init_session("")
