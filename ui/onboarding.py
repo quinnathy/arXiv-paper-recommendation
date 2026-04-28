@@ -124,6 +124,8 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         confirm_password = ""
         name = st.text_input("Your name", placeholder="Enter your display name")
 
+    st.write("")
+
     # -- Topic & concept tag selection (unified) --
     concept_embeddings = index.concept_embeddings or {}
     st.write("**Pick topics and themes you're interested in:**")
@@ -136,26 +138,37 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         index.category_centroids, concept_embeddings,
     )
 
+    st.write("")
+
     # -- Free-text interests --
     free_texts = free_text_input()
 
+    st.write("")
+
     # -- Optional Scholar profile --
-    st.write("**Optional:** paste your Google Scholar profile URL for "
-             "more precise first-day recommendations.")
+    st.write("**Paste your Google Scholar profile URL** (optional)")
     scholar_url = st.text_input(
         "Google Scholar URL",
         placeholder="https://scholar.google.com/citations?user=...",
+        label_visibility="collapsed",
     )
 
+    st.write("")
+
     # -- Diversity slider --
-    st.write("**How broad should your daily papers be?**")
+    st.write("**Exploration range**")
+    st.caption(
+        "Lower values surface papers closest to your core interests. "
+        "Higher values mix in papers from neighboring fields for serendipity."
+    )
     diversity = st.slider(
-        "Diversity",
+        "Exploration range",
         min_value=0.0,
         max_value=1.0,
         value=0.5,
         step=0.1,
-        help="0 = focused on your strongest interest · 1 = explore broadly",
+        format="%.1f",
+        label_visibility="collapsed",
     )
 
     if st.button("Start reading", type="primary"):

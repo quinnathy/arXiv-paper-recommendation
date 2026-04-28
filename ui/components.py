@@ -9,6 +9,7 @@ Provides self-contained components that can be composed into pages:
 
 from __future__ import annotations
 
+import random
 from typing import Callable
 
 import numpy as np
@@ -232,7 +233,12 @@ def paper_card(
     is_responded = arxiv_id in responded
 
     with st.container(border=True):
-        st.subheader(" ".join(meta["title"].split()))
+        title_text = " ".join(meta["title"].split())
+        st.markdown(
+            f'<p style="font-size:3.0rem; font-weight:650; '
+            f'line-height:1.5; margin-bottom:0.30rem;">{title_text}</p>',
+            unsafe_allow_html=True,
+        )
 
         # Category badges
         categories = meta.get("categories", [])
@@ -306,13 +312,68 @@ def unified_tag_selector(
         if label not in label_map:
             label_map[label] = ("category", label)
 
-    options = sorted(label_map.keys())
+    options = list(label_map.keys())
 
-    selected_labels = st.multiselect(
+    # Stable random order within the session
+    if "tag_order_seed" not in st.session_state:
+        st.session_state["tag_order_seed"] = random.randint(0, 2**31)
+    rng = random.Random(st.session_state["tag_order_seed"])
+    rng.shuffle(options)
+
+    # Assign a stable color to each option (seeded by tag_order_seed)
+    _PILL_PALETTE = [
+        "#D69399", "#648C64", "#889EBA", "#C1AB7C",
+        "#9C85A7", "#9EECD4", "#D28C5E", "#89A8B6",
+        "#BE88A4", "#7AB196", "#7F609B", "#FCE88E",
+    ]
+    color_rng = random.Random(st.session_state["tag_order_seed"] + 1)
+    option_colors = [color_rng.choice(_PILL_PALETTE) for _ in options]
+
+    # Build per-pill CSS rules — use descendant selectors (Streamlit wraps
+    # the tablist in an extra <div> so direct-child `>` doesn't reach it).
+    pill_rules = []
+    for i, color in enumerate(option_colors):
+        pill_rules.append(
+            f"div[data-testid='stPills'] div[role='tablist'] "
+            f"button:nth-child({i + 1}):not([aria-checked='true']) "
+            f"{{ background-color: {color} !important; "
+            f"border-color: {color} !important; }}"
+        )
+
+    # Slow horizontal scroll animation for the pill container
+    scroll_css = """
+    @keyframes pill-scroll {
+        0%   { transform: translateX(0); }
+        100% { transform: translateX(-50%); }
+    }
+    div[data-testid='stPills'] div[role='tablist'] {
+        animation: pill-scroll 60s linear infinite;
+        width: max-content !important;
+        flex-wrap: nowrap !important;
+    }
+    div[data-testid='stPills'] div[role='tablist']:hover {
+        animation-play-state: paused;
+    }
+    div[data-testid='stPills'] {
+        overflow: hidden !important;
+    }
+    """
+
+    st.markdown(
+        f"<style>{scroll_css}\n{''.join(pill_rules)}</style>",
+        unsafe_allow_html=True,
+    )
+
+    selected_labels = st.pills(
         "Select your research interests",
         options=options,
+        selection_mode="multi",
         default=None,
+        label_visibility="collapsed",
     )
+
+    if not selected_labels:
+        selected_labels = []
 
     # Partition selections back into topic labels and concepts.
     topic_labels: list[str] = []
@@ -333,16 +394,16 @@ def free_text_input() -> list[str]:
     Returns:
         List of non-empty phrase strings (one per line).
     """
-    with st.expander("Describe your interests in your own words (optional)"):
-        raw = st.text_area(
-            "Free-text interests",
-            placeholder=(
-                "e.g., diffusion models for medical imaging\n"
-                "single-cell perturbation modeling\n"
-                "LLMs for clinical decision support"
-            ),
-            label_visibility="collapsed",
-        )
+    st.write("**Describe your interests in your own words** (optional)")
+    raw = st.text_area(
+        "Free-text interests",
+        placeholder=(
+            "e.g., diffusion models for medical imaging\n"
+            "single-cell perturbation modeling\n"
+            "LLMs for clinical decision support"
+        ),
+        label_visibility="collapsed",
+    )
 
     if not raw or not raw.strip():
         return []

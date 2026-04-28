@@ -1,0 +1,65 @@
+"""User profile page showing account info and research stats."""
+
+from __future__ import annotations
+
+import streamlit as st
+
+from user.db import get_user, get_seen_ids, get_feedback_counts
+
+
+def render_profile_page() -> None:
+    """Render the user profile page."""
+    user_id = st.session_state["user_id"]
+    user = get_user(user_id)
+    counts = get_feedback_counts(user_id)
+    seen = get_seen_ids(user_id)
+
+    st.title("Your Profile")
+
+    # --- Identity card ---
+    col_avatar, col_info = st.columns([0.15, 0.85])
+    with col_avatar:
+        st.markdown(
+            '<div style="font-size:3.5rem; text-align:center;">&#129489;</div>',
+            unsafe_allow_html=True,
+        )
+    with col_info:
+        st.markdown(f"### {user['display_name']}")
+        if user.get("username"):
+            st.caption(f"@{user['username']}")
+        created = user["created_at"][:10] if user["created_at"] else ""
+        last_active = user["last_active"][:10] if user.get("last_active") else ""
+        st.caption(f"Member since {created}  &middot;  Last active {last_active}")
+
+    st.divider()
+
+    # --- Activity metrics ---
+    st.markdown("**Activity**")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Papers seen", len(seen))
+    m2.metric("Liked", counts.get("like", 0))
+    m3.metric("Saved", counts.get("save", 0))
+    m4.metric("Skipped", counts.get("skip", 0))
+
+    st.divider()
+
+    # --- Research threads ---
+    st.markdown("**Research threads**")
+    thread_labels = user.get("thread_labels") or []
+    thread_weights = user.get("thread_weights")
+    k_u = user["k_u"]
+
+    if thread_labels:
+        for i, label in enumerate(thread_labels):
+            weight_pct = ""
+            if thread_weights is not None and i < len(thread_weights):
+                weight_pct = f" &middot; {thread_weights[i]:.0%} weight"
+            st.markdown(f"- {label}{weight_pct}")
+    else:
+        st.write(f"{k_u} thread{'s' if k_u != 1 else ''}")
+
+    st.divider()
+
+    # --- Settings snapshot ---
+    st.markdown("**Preferences**")
+    st.write(f"Exploration range: **{user['diversity']:.1f}**")

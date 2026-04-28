@@ -8,15 +8,18 @@ from pipeline.runtime import configure_single_thread_runtime
 
 configure_single_thread_runtime()
 
+from pathlib import Path
+
 import streamlit as st
 
 from pipeline.index import PaperIndex
 from user.db import init_db
-from user.session import load_or_init_session, is_onboarded
+from user.session import load_or_init_session, is_onboarded, logout_user
 from ui.onboarding import render_onboarding
 from ui.daily_feed import render_daily_feed
-
 from ui.research_mode import render_research_mode
+from ui.profile_page import render_profile_page
+from ui.archive_page import render_archive_page
 
 DB_PATH = "data/arxiv_rec.db"
 
@@ -25,6 +28,11 @@ st.set_page_config(
     page_icon="📄",
     layout="centered",
 )
+
+# -- global stylesheet -----------------------------------------------------
+_css_path = Path(__file__).parent / "ui" / "style.css"
+if _css_path.exists():
+    st.markdown(f"<style>{_css_path.read_text()}</style>", unsafe_allow_html=True)
 
 
 @st.cache_resource
@@ -58,9 +66,82 @@ if not index.is_loaded():
 if not is_onboarded():
     render_onboarding(index, DB_PATH)
 else:
-    page = st.sidebar.radio("Navigation", ["Daily Feed", "Research Lab"])
-    
-    if page == "Daily Feed":
-        render_daily_feed(index, DB_PATH)
+    # --- Sidebar navigation ---
+    with st.sidebar:
+        st.markdown(
+            """<style>
+            /* Sidebar nav buttons — bookmark style */
+            section[data-testid='stSidebar'] button[kind='secondary'] {
+                font-size: 1rem !important;
+                font-weight: 600 !important;
+                padding: 0.6rem 1rem !important;
+                border-radius: 0.5rem !important;
+                text-align: left !important;
+                justify-content: flex-start !important;
+            }
+            /* Log-out button — outlined / distinct */
+            section[data-testid='stSidebar'] button[kind='secondary'].logout-btn,
+            section[data-testid='stSidebar'] div[data-testid='stButton']:last-child button {
+                font-weight: 400 !important;
+                border: 1px solid rgba(150,150,150,0.4) !important;
+                background: transparent !important;
+                color: inherit !important;
+                font-size: 0.9rem !important;
+                padding: 0.4rem 1rem !important;
+            }
+            </style>""",
+            unsafe_allow_html=True,
+        )
+        profile_clicked = st.button("User Profile", use_container_width=True)
+        archive_clicked = st.button("Archive Papers", use_container_width=True)
+        st.divider()
+        if st.button("Log out", use_container_width=True):
+            logout_user()
+            st.rerun()
+
+    # --- Mode pills (main content area) ---
+    st.markdown(
+        """<style>
+        div[data-testid='stPills'] div[role='tablist'] button {
+            font-size: 1.05rem !important;
+            padding: 0.45rem 1.6rem !important;
+            font-weight: 600 !important;
+            border-radius: 2rem !important;
+        }
+        div[data-testid='stPills'] div[role='tablist'] button[aria-checked='true'] {
+            font-weight: 700 !important;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+    active_tab = st.pills(
+        "mode",
+        options=["Daily Feed", "Research Lab"],
+        default="Daily Feed",
+        label_visibility="collapsed",
+    )
+
+    # Persist overlay selection across reruns
+    if profile_clicked:
+        st.session_state["overlay_page"] = "profile"
+    elif archive_clicked:
+        st.session_state["overlay_page"] = "archive"
+
+    overlay = st.session_state.get("overlay_page")
+
+    # --- Render overlay pages or main content ---
+    if overlay == "profile":
+        if st.button("← Back"):
+            st.session_state.pop("overlay_page", None)
+            st.rerun()
+        render_profile_page()
+    elif overlay == "archive":
+        if st.button("← Back"):
+            st.session_state.pop("overlay_page", None)
+            st.rerun()
+        render_archive_page()
     else:
-        render_research_mode()
+        if active_tab == "Research Lab":
+            render_research_mode()
+        else:
+            render_daily_feed(index, DB_PATH)
