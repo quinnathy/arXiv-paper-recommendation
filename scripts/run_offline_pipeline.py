@@ -28,9 +28,23 @@ parser.add_argument(
 )
 parser.add_argument(
     "--k",
+    "--kmeans-k",
+    dest="k",
     type=int,
     default=500,
     help="Number of k-means clusters. Default 500.",
+)
+parser.add_argument(
+    "--kmeans-batch-size",
+    type=int,
+    default=4096,
+    help="MiniBatchKMeans batch size for production clustering.",
+)
+parser.add_argument(
+    "--kmeans-max-iter",
+    type=int,
+    default=100,
+    help="MiniBatchKMeans max iterations for production clustering.",
 )
 parser.add_argument(
     "--seed",
@@ -55,6 +69,76 @@ parser.add_argument(
     action="store_true",
     help="Disable HF transfer acceleration (sets HF_HUB_ENABLE_HF_TRANSFER=0).",
 )
+parser.add_argument(
+    "--run-kmeans-diagnostics",
+    dest="run_kmeans_diagnostics",
+    action="store_true",
+    help="Run the K sweep diagnostics after generating embeddings and production clusters.",
+)
+parser.add_argument(
+    "--skip-kmeans-diagnostics",
+    dest="run_kmeans_diagnostics",
+    action="store_false",
+    help="Skip K sweep diagnostics.",
+)
+parser.set_defaults(run_kmeans_diagnostics=False)
+parser.add_argument(
+    "--kmeans-diagnostic-k-values",
+    nargs="+",
+    type=int,
+    default=None,
+    help="K grid for optional offline K sweep diagnostics.",
+)
+parser.add_argument(
+    "--kmeans-diagnostic-sample-size",
+    type=int,
+    default=200000,
+    help="Sample size for optional offline K sweep diagnostics.",
+)
+parser.add_argument(
+    "--run-pca-viz",
+    dest="run_pca_viz",
+    action="store_true",
+    help="Generate PCA visualization diagnostics after artifact save.",
+)
+parser.add_argument(
+    "--skip-pca-viz",
+    dest="run_pca_viz",
+    action="store_false",
+    help="Skip PCA visualization diagnostics.",
+)
+parser.set_defaults(run_pca_viz=False)
+parser.add_argument(
+    "--run-umap-viz",
+    dest="run_umap_viz",
+    action="store_true",
+    help="Generate UMAP visualization diagnostics after artifact save.",
+)
+parser.add_argument(
+    "--run-umap",
+    dest="run_umap_viz",
+    action="store_true",
+    help="Alias for --run-umap-viz.",
+)
+parser.add_argument(
+    "--skip-umap",
+    dest="run_umap_viz",
+    action="store_false",
+    help="Skip UMAP visualization diagnostics.",
+)
+parser.set_defaults(run_umap_viz=False)
+parser.add_argument(
+    "--viz-sample-size",
+    type=int,
+    default=50000,
+    help="Sample size for optional PCA/UMAP visualizations.",
+)
+parser.add_argument(
+    "--viz-color-by",
+    choices=["primary_category", "top_level_category", "cluster"],
+    default="primary_category",
+    help="Default color mode for generated visualization artifacts.",
+)
 args, _unknown = parser.parse_known_args()
 
 categories = [c.strip() for c in args.categories.split(",") if c.strip()] or None
@@ -74,4 +158,13 @@ run(
     k=args.k,
     seed=args.seed,
     categories=categories,
+    kmeans_batch_size=args.kmeans_batch_size,
+    kmeans_max_iter=args.kmeans_max_iter,
+    run_kmeans_diagnostics=args.run_kmeans_diagnostics,
+    kmeans_diagnostic_k_values=args.kmeans_diagnostic_k_values,
+    kmeans_diagnostic_sample_size=args.kmeans_diagnostic_sample_size,
+    run_pca_viz=args.run_pca_viz,
+    run_umap_viz=args.run_umap_viz,
+    viz_sample_size=args.viz_sample_size,
+    viz_color_by=args.viz_color_by,
 )

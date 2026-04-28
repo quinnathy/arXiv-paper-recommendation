@@ -1,6 +1,9 @@
 streamlit>=1.35
 numpy>=1.26
 scikit-learn>=1.4
+pandas>=2.2
+plotly>=5.20
+kaleido>=0.2
 transformers>=4.40
 adapters>=1.0
 kagglehub>=0.2

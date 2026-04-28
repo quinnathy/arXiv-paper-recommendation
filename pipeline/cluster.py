@@ -18,12 +18,18 @@ from sklearn.cluster import MiniBatchKMeans
 def fit_kmeans(
     embeddings: np.ndarray,
     k: int = 500,
+    batch_size: int = 4096,
+    max_iter: int = 100,
+    random_state: int = 42,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Cluster paper embeddings using MiniBatchKMeans.
 
     Args:
         embeddings: Shape (N, 768), float32, unit-norm rows.
         k: Number of clusters. Default 500.
+        batch_size: MiniBatchKMeans batch size.
+        max_iter: Maximum MiniBatchKMeans iterations.
+        random_state: Random seed for reproducibility.
 
     Returns:
         Tuple of:
@@ -31,7 +37,11 @@ def fit_kmeans(
             centroids: Shape (k, 768) float32 — unit-norm cluster centroids.
     """
     kmeans = MiniBatchKMeans(
-        n_clusters=k, n_init=5, random_state=42, batch_size=4096
+        n_clusters=k,
+        n_init=5,
+        random_state=random_state,
+        batch_size=batch_size,
+        max_iter=max_iter,
     )
     kmeans.fit(embeddings)
 
@@ -40,7 +50,7 @@ def fit_kmeans(
 
     # Normalize centroids to unit length
     norms = np.linalg.norm(centroids, axis=1, keepdims=True)
-    centroids = centroids / norms
+    centroids = centroids / np.maximum(norms, 1e-12)
 
     return cluster_ids, centroids
 
