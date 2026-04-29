@@ -1,4 +1,4 @@
-"""Personalized semantic query search for Research Lab.
+"""Personalized semantic query search.
 
 This module is intentionally separate from the daily-feed recommendation
 engine. Query search is driven primarily by the user's typed query, with the
