@@ -13,18 +13,23 @@ from collections.abc import Iterable
 import numpy as np
 
 from pipeline.index import PaperIndex
+from recommender.config import (
+    DAILY_CANDIDATE_POOL_SIZE,
+    DAILY_FEED_SIZE,
+    DAILY_MAX_PER_CLUSTER,
+)
 from recommender.retrieve import find_nearest_clusters, knn_in_clusters
-from recommender.rerank import recency_score
+from recommender.rerank import paper_age_days, recency_score
 
 
 logger = logging.getLogger(__name__)
 
-TARGET_RECOMMENDATIONS = 5
-INITIAL_TOP_M = 80
-EXPANDED_TOP_M = 150
-MAX_INITIAL_CLUSTERS = 8
+TARGET_RECOMMENDATIONS = DAILY_FEED_SIZE
+INITIAL_TOP_M = DAILY_CANDIDATE_POOL_SIZE
+EXPANDED_TOP_M = DAILY_CANDIDATE_POOL_SIZE
+MAX_INITIAL_CLUSTERS = 12
 MAX_EXPANDED_CLUSTERS = 16
-RELAXED_CLUSTER_CAP = 2
+RELAXED_CLUSTER_CAP = DAILY_MAX_PER_CLUSTER
 
 
 def _normalize_cluster_ids(cluster_ids: Iterable[int] | np.ndarray) -> set[int]:
@@ -114,18 +119,53 @@ def expand_clusters_near_user(
 def _score_candidates(
     candidates: list[tuple[float, dict, int]],
     recency_weight: float = 0.25,
-    noise_scale: float = 0.02,
 ) -> list[tuple[float, dict, int]]:
-    rng = np.random.default_rng()
     scored: list[tuple[float, dict, int]] = []
     for sim_score, meta, nearest_ci in candidates:
-        bonus = recency_weight * recency_score(meta.get("update_date", ""))
-        noise = rng.uniform(-noise_scale, noise_scale)
-        final = sim_score + bonus + noise
-        meta["rec_score"] = final
-        scored.append((final, meta, nearest_ci))
+        recency = recency_score(meta.get("update_date", ""))
+        final = sim_score + recency_weight * recency
+        enriched_meta = dict(meta)
+        enriched_meta["rec_score"] = final
+        enriched_meta["final_score"] = final
+        enriched_meta["raw_similarity"] = float(sim_score)
+        enriched_meta["recency_score"] = float(recency)
+        enriched_meta["nearest_centroid_id"] = int(nearest_ci)
+        enriched_meta["age_days"] = paper_age_days(meta.get("update_date", ""))
+        scored.append((final, enriched_meta, nearest_ci))
     scored.sort(key=lambda x: x[0], reverse=True)
     return scored
+
+
+def _candidate_is_available(
+    meta: dict,
+    seen_ids: set[str],
+    selected_ids: set[str],
+    cluster_counts: Counter,
+    max_per_cluster: int,
+) -> bool:
+    pid = meta.get("id")
+    if pid in seen_ids or pid in selected_ids:
+        return False
+    cid = meta.get("cluster_id")
+    if cluster_counts[cid] >= max_per_cluster:
+        return False
+    return True
+
+
+def _append_candidate(
+    selected: list[dict],
+    selected_ids: set[str],
+    cluster_counts: Counter,
+    covered_centroids: set[int],
+    meta: dict,
+    nearest_ci: int,
+) -> None:
+    selected.append(meta)
+    pid = meta.get("id")
+    if pid is not None:
+        selected_ids.add(pid)
+    cluster_counts[meta.get("cluster_id")] += 1
+    covered_centroids.add(nearest_ci)
 
 
 def select_with_relaxation(
@@ -135,70 +175,68 @@ def select_with_relaxation(
     n: int = TARGET_RECOMMENDATIONS,
     seen_ids: set[str] | None = None,
 ) -> tuple[list[dict], int, int]:
-    """Select recommendations using strict, relaxed, then score-only passes."""
+    """Select recommendations with early centroid coverage and cluster caps."""
     seen_ids = seen_ids or set()
     scored = _score_candidates(candidates)
 
     selected: list[dict] = []
     selected_ids: set[str] = set()
-    used_clusters: set[int] = set()
+    cluster_counts: Counter = Counter()
     covered_centroids: set[int] = set()
 
+    if diversity > 0.5 and k_u > 1:
+        early_slots = min(k_u, n)
+        while len(selected) < early_slots and len(covered_centroids) < k_u:
+            best: tuple[float, dict, int] | None = None
+            for score, meta, nearest_ci in scored:
+                if nearest_ci in covered_centroids:
+                    continue
+                if not _candidate_is_available(
+                    meta,
+                    seen_ids,
+                    selected_ids,
+                    cluster_counts,
+                    DAILY_MAX_PER_CLUSTER,
+                ):
+                    continue
+                best = (score, meta, nearest_ci)
+                break
+            if best is None:
+                break
+            _score, meta, nearest_ci = best
+            _append_candidate(
+                selected,
+                selected_ids,
+                cluster_counts,
+                covered_centroids,
+                meta,
+                nearest_ci,
+            )
+
+    early_coverage_count = len(selected)
+
     for _score, meta, nearest_ci in scored:
-        pid = meta.get("id")
-        if pid in seen_ids or pid in selected_ids:
-            continue
-        cid = meta.get("cluster_id")
-        if cid in used_clusters:
-            continue
-        if (
-            diversity > 0.5
-            and k_u > 1
-            and nearest_ci in covered_centroids
-            and len(covered_centroids) < k_u
+        if not _candidate_is_available(
+            meta,
+            seen_ids,
+            selected_ids,
+            cluster_counts,
+            DAILY_MAX_PER_CLUSTER,
         ):
             continue
 
-        selected.append(meta)
-        if pid is not None:
-            selected_ids.add(pid)
-        used_clusters.add(cid)
-        covered_centroids.add(nearest_ci)
-        if len(selected) >= n:
-            return selected[:n], len(selected), len(selected)
-
-    strict_count = len(selected)
-    cluster_counts = Counter(meta.get("cluster_id") for meta in selected)
-
-    for _score, meta, _nearest_ci in scored:
-        pid = meta.get("id")
-        if pid in seen_ids or pid in selected_ids:
-            continue
-        cid = meta.get("cluster_id")
-        if cluster_counts[cid] >= RELAXED_CLUSTER_CAP:
-            continue
-
-        selected.append(meta)
-        if pid is not None:
-            selected_ids.add(pid)
-        cluster_counts[cid] += 1
-        if len(selected) >= n:
-            return selected[:n], strict_count, len(selected)
-
-    relaxed_count = len(selected)
-
-    for _score, meta, _nearest_ci in scored:
-        pid = meta.get("id")
-        if pid in seen_ids or pid in selected_ids:
-            continue
-
-        selected.append(meta)
-        if pid is not None:
-            selected_ids.add(pid)
+        _append_candidate(
+            selected,
+            selected_ids,
+            cluster_counts,
+            covered_centroids,
+            meta,
+            nearest_ci,
+        )
         if len(selected) >= n:
             break
 
-    return selected[:n], strict_count, relaxed_count
+    return selected[:n], early_coverage_count, len(selected)
 
 
 def _dedupe_candidates(
@@ -239,7 +277,7 @@ def recommend(
         seen_ids: Set of arXiv paper IDs already seen.
         index: Loaded PaperIndex.
         diversity: δ slider value, 0.0–1.0.
-        n: Papers to recommend. Default 5.
+        n: Papers to recommend. Default 20.
 
     Returns:
         List of up to n paper_meta dicts with "rec_score" added.
@@ -264,7 +302,7 @@ def recommend(
         k=INITIAL_TOP_M,
     )
 
-    # 3. Strict diversity filter, then relaxed passes on already-retrieved candidates
+    # 3. Rerank and apply daily-feed diversity constraints
     results, strict_count, relaxed_count = select_with_relaxation(
         candidates,
         k_u=k_u,
@@ -304,7 +342,7 @@ def recommend(
 
     logger.info(
         "recommendations: initial_clusters=%d expanded_clusters=%d candidates=%d "
-        "strict_selected=%d relaxed_selected=%d final_selected=%d "
+        "early_coverage_selected=%d capped_selected=%d final_selected=%d "
         "bounded_expansion_used=%s",
         len(initial_clusters),
         len(final_clusters),

@@ -13,13 +13,14 @@ from pathlib import Path
 import streamlit as st
 
 from pipeline.index import PaperIndex
-from user.db import init_db
+from user.db import get_user, init_db
 from user.session import load_or_init_session, is_onboarded, logout_user
 from ui.onboarding import render_onboarding
 from ui.daily_feed import render_daily_feed
 from ui.research_mode import render_research_mode
 from ui.profile_page import render_profile_page
 from ui.archive_page import render_archive_page
+from ui.learning_mode import render_learning_mode, render_workspace_sidebar
 
 DB_PATH = "data/arxiv_rec.db"
 
@@ -63,11 +64,22 @@ if not index.is_loaded():
     st.stop()
 
 # -- route -----------------------------------------------------------------
+# -- route -----------------------------------------------------------------
 if not is_onboarded():
     render_onboarding(index, DB_PATH)
 else:
-    # --- Sidebar navigation ---
+    # 1. --- LEFT SIDEBAR (Native Navigation) ---
     with st.sidebar:
+        user_id = st.session_state["user_id"]
+        user_data = get_user(user_id) #
+
+        # Profile Image and Name
+        st.image("https://www.gravatar.com/avatar/0000?d=mp&f=y", width=60)
+        st.markdown(f"**{user_data['display_name']}**")
+
+        if st.button("👤 User Profile", use_container_width=True):
+            st.session_state["overlay_page"] = "profile"
+
         st.markdown(
             """<style>
             /* Sidebar nav buttons — bookmark style */
@@ -93,9 +105,18 @@ else:
             unsafe_allow_html=True,
         )
         profile_clicked = st.button("User Profile", use_container_width=True)
-        archive_clicked = st.button("Archive Papers", use_container_width=True)
         st.divider()
-        if st.button("Log out", use_container_width=True):
+
+        if st.button("🔍 Explore Mode", use_container_width=True):
+            st.session_state["active_tab"] = "Daily Feed"
+            st.session_state.pop("overlay_page", None)
+
+        if st.button("📂 Archive", use_container_width=True):
+            st.session_state["overlay_page"] = "archive"
+
+        # Spacer replacement for st.spacer
+        st.markdown("<br>" * 5, unsafe_allow_html=True)
+        if st.button("🚪 Log out", use_container_width=True):
             logout_user()
             st.rerun()
 
@@ -114,34 +135,46 @@ else:
         </style>""",
         unsafe_allow_html=True,
     )
+    if "active_tab_value" not in st.session_state:
+        st.session_state["active_tab_value"] = st.session_state.pop(
+            "active_tab", "Daily Feed"
+        )
+
+    if st.session_state["active_tab_value"] == "Learning Mode":
+        st.session_state["active_tab_value"] = "Workspace"
+
+    if "requested_tab" in st.session_state:
+        st.session_state["active_tab_value"] = st.session_state.pop("requested_tab")
+        st.session_state.pop("active_tab_widget", None)
+
+    if st.session_state["active_tab_value"] == "Learning Mode":
+        st.session_state["active_tab_value"] = "Workspace"
+
     active_tab = st.pills(
         "mode",
-        options=["Daily Feed", "Research Lab"],
-        default="Daily Feed",
+        options=["Daily Feed", "Workspace", "Research Lab"],
+        default=st.session_state["active_tab_value"],
+        key="active_tab_widget",
         label_visibility="collapsed",
     )
+    st.session_state["active_tab_value"] = active_tab
+
+    render_workspace_sidebar(index, active_tab)
 
     # Persist overlay selection across reruns
     if profile_clicked:
         st.session_state["overlay_page"] = "profile"
-    elif archive_clicked:
-        st.session_state["overlay_page"] = "archive"
 
     overlay = st.session_state.get("overlay_page")
-
-    # --- Render overlay pages or main content ---
     if overlay == "profile":
         if st.button("← Back"):
             st.session_state.pop("overlay_page", None)
             st.rerun()
         render_profile_page()
-    elif overlay == "archive":
-        if st.button("← Back"):
-            st.session_state.pop("overlay_page", None)
-            st.rerun()
-        render_archive_page()
     else:
         if active_tab == "Research Lab":
             render_research_mode(index)
+        elif active_tab == "Workspace":
+            render_learning_mode(index)
         else:
             render_daily_feed(index, DB_PATH)

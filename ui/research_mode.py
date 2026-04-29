@@ -1,17 +1,7 @@
 import streamlit as st
-from pipeline.embed import EmbeddingModel
-from pipeline.index import PaperIndex
-from recommender.query_search import expand_query, search_papers
-from user.db import (
-    get_all_notes,
-    get_seen_ids,
-    log_feedback,
-    save_research_note,
-    update_centroids,
-)
-from user.profile import apply_feedback
-from user.session import save_centroids_to_session
-from ui.components import paper_card
+from streamlit.components.v1 import iframe
+from user.db import save_research_note, get_all_notes
+from fpdf import FPDF
 from pipeline.transcribe import get_paper_markdown
 
 
@@ -119,7 +109,7 @@ def render_research_mode(index: PaperIndex):
         st.subheader(f"Current Paper: {active_id}")
         if active_id != "No Paper Selected":
             pdf_url = f"https://arxiv.org/pdf/{active_id}.pdf"
-            st.components.v1.iframe(pdf_url, height=800)
+            iframe(pdf_url, height=800)
         else:
             st.info("Select a paper from your feed to start researching.")
         if st.button("✨ Transcribe with AI"):
