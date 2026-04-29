@@ -1,6 +1,6 @@
 """Daily feed page for onboarded users.
 
-Main page showing 5 recommended papers per day with like/save/skip actions.
+Main page showing recommended papers per day with like/save/skip actions.
 Handles feedback processing: logging to DB, updating user centroids via EMA,
 and persisting the updated centroids.
 """
@@ -15,10 +15,17 @@ import numpy as np
 import streamlit as st
 
 from pipeline.index import PaperIndex
+from recommender.config import DAILY_FEED_SIZE
 from recommender.retrieve import find_nearest_clusters
 from recommender.engine import recommend
 from recommender.visualization import build_cluster_dataframe, make_user_cluster_plot
-from user.db import get_user, get_seen_ids, log_feedback, update_centroids
+from user.db import (
+    get_seen_ids,
+    get_user,
+    log_feedback,
+    mark_papers_seen,
+    update_centroids,
+)
 from user.profile import apply_feedback
 from user.session import save_centroids_to_session
 from ui.components import paper_card
@@ -245,7 +252,14 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
         seen_ids = get_seen_ids(user_id)
         excluded_ids = seen_ids | st.session_state["shown_ids"]
         with st.spinner("Finding your papers..."):
-            recs = recommend(centroids, excluded_ids, index, diversity=diversity, n=5)
+            recs = recommend(
+                centroids,
+                excluded_ids,
+                index,
+                diversity=diversity,
+                n=DAILY_FEED_SIZE,
+            )
+        mark_papers_seen(user_id, [r["id"] for r in recs])
         st.session_state["todays_recs"] = recs
         st.session_state["shown_ids"].update(r["id"] for r in recs)
 
@@ -262,7 +276,7 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
             st.session_state.pop("responded", None)
             st.rerun()
         return
-    if len(recs) < 5:
+    if len(recs) < DAILY_FEED_SIZE:
         st.warning("You've seen most papers in your areas. Here's what we found:")
 
     st.subheader(f"Your {len(recs)} paper{'s' if len(recs) != 1 else ''} for today")
@@ -285,7 +299,10 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
 
     # Demo button: simulate next day's digest
     st.divider()
-    if st.button("Recommend again (demo)", help="Fetch a fresh batch of 5 papers to evaluate quality"):
+    if st.button(
+        "Recommend again (demo)",
+        help=f"Fetch a fresh batch of {DAILY_FEED_SIZE} papers to evaluate quality",
+    ):
         st.session_state.pop("todays_recs", None)
         st.session_state.pop("responded", None)
         st.rerun()

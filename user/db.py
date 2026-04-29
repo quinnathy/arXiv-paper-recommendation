@@ -1,8 +1,9 @@
 """SQLite database schema and CRUD operations for user profiles and feedback.
 
-Two tables:
+Core tables:
     users    — stores user profile with serialized multi-vector centroids blob.
-    feedback — logs every like/save/skip interaction for analytics and seen_ids.
+    feedback — logs every like/save/skip interaction for analytics.
+    seen_papers — logs papers served in the daily feed for seen_ids.
 
 No ORM; uses plain sqlite3. All writes are synchronous (Streamlit is
 single-user per session, so no threading is needed).
@@ -66,6 +67,14 @@ def init_db(db_path: str = DB_PATH) -> None:
             cluster_id INTEGER NOT NULL,
             score      REAL NOT NULL,
             created_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS seen_papers (
+            user_id    TEXT NOT NULL,
+            arxiv_id   TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, arxiv_id)
         )
     """)
     # Additive migration: add thread metadata columns if missing.
@@ -321,22 +330,48 @@ def log_feedback(
 
 
 def get_seen_ids(user_id: str) -> set[str]:
-    """Get the set of all arXiv paper IDs this user has interacted with.
+    """Get the set of all arXiv paper IDs this user has been served or acted on.
 
     Args:
         user_id: The UUID string of the user.
 
     Returns:
-        Set of arxiv_id strings from all feedback rows for this user.
+        Set of arxiv_id strings from served daily feeds and feedback rows.
     """
     conn = _connect()
     rows = conn.execute(
-        "SELECT arxiv_id FROM feedback WHERE user_id = ?",
-        (user_id,),
+        "SELECT arxiv_id FROM feedback WHERE user_id = ? "
+        "UNION SELECT arxiv_id FROM seen_papers WHERE user_id = ?",
+        (user_id, user_id),
     ).fetchall()
     conn.close()
 
     return {row[0] for row in rows}
+
+
+def mark_papers_seen(
+    user_id: str,
+    arxiv_ids: list[str] | tuple[str, ...] | set[str],
+) -> None:
+    """Mark final served daily-feed papers as seen.
+
+    This is intentionally separate from feedback so generated-but-not-served
+    candidates never affect future retrieval, and served papers do not count as
+    likes/saves/skips.
+    """
+    clean_ids = sorted({pid for pid in arxiv_ids if pid})
+    if not clean_ids:
+        return
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn = _connect()
+    conn.executemany(
+        "INSERT OR IGNORE INTO seen_papers (user_id, arxiv_id, created_at) "
+        "VALUES (?, ?, ?)",
+        [(user_id, arxiv_id, now) for arxiv_id in clean_ids],
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_saved_papers(user_id: str) -> list[dict]:

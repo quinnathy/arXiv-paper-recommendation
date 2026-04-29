@@ -1,6 +1,6 @@
 # ArXiv Daily
 
-A personalized paper recommendation engine that surfaces 5 arXiv papers daily, tailored to your research interests. Built with Streamlit, SPECTER2 embeddings, and a lightweight local stack — no cloud services or external databases required.
+A personalized paper recommendation engine that surfaces 20 arXiv papers daily, tailored to your research interests. Built with Streamlit, SPECTER2 embeddings, and a lightweight local stack — no cloud services or external databases required.
 
 ## How It Works
 
@@ -34,10 +34,10 @@ The system has two phases: an **offline batch pipeline** that runs once (or nigh
 
 #### 3. Online Serving
 
-1. **Cluster selection** — The total cluster budget is `ceil(2 + delta * 3)` (delta=0 gives 2 clusters, delta=1 gives 5). Budget is split evenly across the user's `k_u` centroids. Each centroid selects its top clusters by dot product. Results are deduplicated.
-2. **KNN retrieval** — Brute-force dot-product search within those clusters. Each paper is scored against **all** user centroids; the maximum similarity (nearest research thread) is used. Filtering out previously seen papers, the top 40 candidates are kept.
+1. **Cluster selection** — The total cluster budget is `ceil(4 + delta * 8)` (delta=0 gives 4 clusters, delta=1 gives 12). Budget is split evenly across the user's `k_u` centroids. Each centroid selects its top clusters by dot product. Results are deduplicated.
+2. **KNN retrieval** — Brute-force dot-product search within those clusters. Each paper is scored against **all** user centroids; the maximum similarity (nearest research thread) is used. Filtering out previously seen papers, the top 200 candidates are kept.
 3. **Re-ranking** — Adjust scores with a recency bonus: `score = similarity + 0.25 * exp(-age_days / 30)`. Newer papers get a boost.
-4. **Diversity filter** — At most one paper per k-means cluster is selected (always enforced). When delta > 0.5 and k_u > 1, output slots are held open for uncovered user centroids before filling by score alone. Stop at 5 papers.
+4. **Diversity filter** — At most two papers per k-means cluster are selected. When delta > 0.5 and k_u > 1, early slots try to cover each user centroid before filling by score alone. Stop at 20 papers.
 
 Total serving cost: <1 ms on CPU per user.
 
@@ -51,8 +51,8 @@ Total serving cost: <1 ms on CPU per user.
 | k_u | 1-3 | User research threads (centroids) |
 | delta | 0.0-1.0 | Diversity slider |
 | alpha | 0.15 | EMA learning rate |
-| M | 40 | KNN candidate pool size |
-| n | 5 | Papers served per day |
+| M | 200 | KNN candidate pool size |
+| n | 20 | Papers served per day |
 
 ## Tech Stack
 
