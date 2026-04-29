@@ -13,14 +13,13 @@ from pathlib import Path
 import streamlit as st
 
 from pipeline.index import PaperIndex
-from user.db import init_db
+from user.db import get_user, init_db
 from user.session import load_or_init_session, is_onboarded, logout_user
 from ui.onboarding import render_onboarding
 from ui.daily_feed import render_daily_feed
 from ui.research_mode import render_research_mode
 from ui.profile_page import render_profile_page
 from ui.archive_page import render_archive_page
-from user.db import init_db, get_user, get_saved_papers 
 from ui.learning_mode import render_learning_mode, render_workspace_sidebar
 
 DB_PATH = "data/arxiv_rec.db"
@@ -77,10 +76,10 @@ else:
         # Profile Image and Name
         st.image("https://www.gravatar.com/avatar/0000?d=mp&f=y", width=60)
         st.markdown(f"**{user_data['display_name']}**")
-        
+
         if st.button("👤 User Profile", use_container_width=True):
             st.session_state["overlay_page"] = "profile"
-        
+
         st.markdown(
             """<style>
             /* Sidebar nav buttons — bookmark style */
@@ -111,12 +110,12 @@ else:
         if st.button("🔍 Explore Mode", use_container_width=True):
             st.session_state["active_tab"] = "Daily Feed"
             st.session_state.pop("overlay_page", None)
-            
+
         if st.button("📂 Archive", use_container_width=True):
             st.session_state["overlay_page"] = "archive"
 
         # Spacer replacement for st.spacer
-        st.markdown("<br>" * 5, unsafe_allow_html=True) 
+        st.markdown("<br>" * 5, unsafe_allow_html=True)
         if st.button("🚪 Log out", use_container_width=True):
             logout_user()
             st.rerun()
@@ -174,7 +173,7 @@ else:
         render_profile_page()
     else:
         if active_tab == "Research Lab":
-            render_research_mode()
+            render_research_mode(index)
         elif active_tab == "Workspace":
             render_learning_mode(index)
         else:

@@ -82,6 +82,14 @@ class EmbeddingModel:
 
         return cls_emb.cpu().numpy().astype(np.float32)
 
+    def embed_query(self, text: str) -> np.ndarray:
+        """Encode one query/search text into a normalized embedding.
+
+        Query search embeds expanded scientific-retrieval text rather than a
+        title/abstract pair, so this thin wrapper keeps that call site explicit.
+        """
+        return self.embed_batch([text])[0]
+
     def embed_papers(self, papers: list[dict]) -> np.ndarray:
         """Encode paper dicts into normalized embeddings.
 

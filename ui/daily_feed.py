@@ -30,6 +30,7 @@ from user.profile import apply_feedback
 from user.session import save_centroids_to_session
 from ui.components import paper_card
 from ui.domain_jokes import select_domain_joke
+from ui.query_search import render_query_search
 
 
 VIZ_ARTIFACTS = (
@@ -241,6 +242,8 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     user_id = st.session_state["user_id"]
     user = get_user(user_id)
 
+    render_query_search(index)
+
     hour = datetime.now().hour
     if hour < 5:
         greeting = "Good evening"
@@ -312,4 +315,3 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     rec_ids = {r["id"] for r in recs}
     if rec_ids and rec_ids.issubset(responded):
         st.success("Come back tomorrow for new recommendations!")
-
