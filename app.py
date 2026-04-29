@@ -142,6 +142,6 @@ else:
         render_archive_page()
     else:
         if active_tab == "Research Lab":
-            render_research_mode()
+            render_research_mode(index)
         else:
             render_daily_feed(index, DB_PATH)
