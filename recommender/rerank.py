@@ -6,18 +6,19 @@ Takes the raw KNN candidates and applies:
    Part N is only shown if Part N-1 was liked/saved; skipped Part N-1
    suppresses all later parts in the same series.
 3. Recency boost — newer papers get a score bonus.
-4. Diversity filter — ensures selected papers come from different clusters.
-5. δ-aware centroid coverage — when δ > 0.5 and k_u > 1, holds output slots
-   open for uncovered user centroids before filling by score alone.
+4. Diversity filter — caps selected papers per retrieval cluster.
+5. δ-aware centroid coverage — when δ > 0.5 and k_u > 1, encourages early
+   coverage across user centroids before filling by score alone.
 """
 
 from __future__ import annotations
 
 import re
+from collections import Counter
 from datetime import datetime
 from math import exp
 
-
+from recommender.config import DAILY_FEED_SIZE, DAILY_MAX_PER_CLUSTER
 
 
 # Phrases that reliably indicate a paper has been withdrawn by the authors.
@@ -185,16 +186,24 @@ def recency_score(published_date: str, halflife_days: float = 30.0) -> float:
     Returns:
         Float in (0, 1]. Recent papers -> ~1.0, old papers -> small positive.
     """
+    age_days = paper_age_days(published_date)
+    if age_days is None:
+        return 0.5
+
+    return exp(-age_days / halflife_days)
+
+
+def paper_age_days(published_date: str) -> int | None:
+    """Return bounded paper age in days, or None when the date is unavailable."""
     try:
         published = datetime.fromisoformat(published_date)
     except (ValueError, TypeError):
-        return 0.5
+        return None
 
     age_days = (datetime.now() - published).days
     age_days = min(age_days, 365)
     age_days = max(age_days, 0)
-
-    return exp(-age_days / halflife_days)
+    return age_days
 
 
 # Main reranking entry point
@@ -204,16 +213,16 @@ def rerank_and_select(
     k_u: int = 1,
     diversity: float = 0.5,
     recency_weight: float = 0.25,
-    n: int = 5,
+    n: int = DAILY_FEED_SIZE,
     liked_ids: set[str] | None = None,
     skipped_ids: set[str] | None = None,
 ) -> list[dict]:
     """Rerank candidates and select diverse top-n papers.
 
     Scoring: final_score = similarity + recency_weight * recency(date).
-    Diversity: at most one paper per k-means cluster (always enforced).
-    When δ > 0.5 and k_u > 1: holds slots for uncovered user centroids
-    before filling remaining spots by score alone.
+    Diversity: at most two papers per k-means cluster (always enforced).
+    When δ > 0.5 and k_u > 1: tries to cover user centroids early before
+    filling remaining spots by score alone.
 
     Args:
         candidates: List of (sim_score, paper_meta, nearest_centroid_idx).
@@ -222,7 +231,7 @@ def rerank_and_select(
         k_u: Number of user centroids.
         diversity: The δ slider value, 0.0–1.0.
         recency_weight: Weight of recency bonus.
-        n: Papers to select. Default 5.
+        n: Papers to select. Default 20.
         liked_ids: arxiv_ids the user liked or saved. Used for series gating.
             Pass get_seen_ids() filtered by signal, or omit to disable.
         skipped_ids: arxiv_ids the user skipped. Used to suppress later parts
@@ -256,23 +265,46 @@ def rerank_and_select(
 
     # --- Step 4: Diversity selection ---
     selected: list[dict] = []
-    used_clusters: set[int] = set()
+    selected_ids: set[str] = set()
+    cluster_counts: Counter = Counter()
     covered_centroids: set[int] = set()
 
-    for _score, meta, nearest_ci in scored:
+    def available(meta: dict) -> bool:
+        pid = meta.get("id")
+        if pid in selected_ids:
+            return False
         cid = meta.get("cluster_id")
-        if cid in used_clusters:
-            continue
+        return cluster_counts[cid] < DAILY_MAX_PER_CLUSTER
 
-        if (diversity > 0.5
-                and k_u > 1
-                and nearest_ci in covered_centroids
-                and len(covered_centroids) < k_u):
-            continue
-
+    def append(meta: dict, nearest_ci: int) -> None:
         selected.append(meta)
-        used_clusters.add(cid)
+        pid = meta.get("id")
+        if pid is not None:
+            selected_ids.add(pid)
+        cluster_counts[meta.get("cluster_id")] += 1
         covered_centroids.add(nearest_ci)
+
+    if diversity > 0.5 and k_u > 1:
+        early_slots = min(k_u, n)
+        while len(selected) < early_slots and len(covered_centroids) < k_u:
+            best = next(
+                (
+                    (meta, nearest_ci)
+                    for _score, meta, nearest_ci in scored
+                    if nearest_ci not in covered_centroids and available(meta)
+                ),
+                None,
+            )
+            if best is None:
+                break
+            meta, nearest_ci = best
+            append(meta, nearest_ci)
+
+    for _score, meta, nearest_ci in scored:
+        if not available(meta):
+            continue
+
+        append(meta, nearest_ci)
         if len(selected) >= n:
             break
 

@@ -1,0 +1,9 @@
+"""Configuration constants for daily-feed recommendation serving."""
+
+DAILY_FEED_SIZE = 20
+DAILY_CANDIDATE_POOL_SIZE = 200
+DAILY_MAX_PER_CLUSTER = 2
+
+DAILY_CLUSTER_BUDGET_BASE = 4
+DAILY_CLUSTER_BUDGET_DIVERSITY_MULTIPLIER = 8
+

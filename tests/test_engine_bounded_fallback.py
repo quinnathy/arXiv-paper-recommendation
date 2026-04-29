@@ -48,7 +48,7 @@ def _install_retrieval(
         lambda user_centroids, index_centroids, diversity: initial_clusters or [0],
     )
 
-    def fake_knn(user_centroids, target_cluster_ids, index, seen_ids, k=40):
+    def fake_knn(user_centroids, target_cluster_ids, index, seen_ids, k=engine.INITIAL_TOP_M):
         clusters = [int(cid) for cid in target_cluster_ids]
         calls.append(clusters)
         results: list[tuple[float, dict, int]] = []
@@ -83,15 +83,25 @@ def test_no_all_cluster_fallback(monkeypatch):
     assert scanned != all_clusters
 
 
-def test_relaxation_happens_before_expansion(monkeypatch):
+def _cluster_candidates(
+    cluster_count: int,
+    per_cluster: int = 2,
+) -> dict[int, list[tuple[float, dict, int]]]:
+    candidates: dict[int, list[tuple[float, dict, int]]] = {}
+    score = 1.0
+    for cid in range(cluster_count):
+        candidates[cid] = []
+        for slot in range(per_cluster):
+            candidates[cid].append(_candidate(f"p{cid}-{slot}", cid, score))
+            score -= 0.001
+    return candidates
+
+
+def test_cluster_cap_happens_before_expansion(monkeypatch):
     calls = _install_retrieval(
         monkeypatch,
-        {
-            0: [_candidate("p0", 0, 1.0), _candidate("p1", 0, 0.99)],
-            1: [_candidate("p2", 1, 0.98), _candidate("p3", 1, 0.97)],
-            2: [_candidate("p4", 2, 0.96)],
-        },
-        initial_clusters=[0, 1, 2],
+        _cluster_candidates(10, per_cluster=2),
+        initial_clusters=list(range(10)),
     )
 
     recs = engine.recommend(
@@ -108,13 +118,7 @@ def test_relaxation_happens_before_expansion(monkeypatch):
 def test_bounded_expansion_is_used_when_initial_candidates_are_insufficient(monkeypatch):
     calls = _install_retrieval(
         monkeypatch,
-        {
-            0: [_candidate("p0", 0, 1.0)],
-            1: [_candidate("p1", 1, 0.99)],
-            2: [_candidate("p2", 2, 0.98)],
-            3: [_candidate("p3", 3, 0.97)],
-            4: [_candidate("p4", 4, 0.96)],
-        },
+        _cluster_candidates(20, per_cluster=2),
     )
 
     recs = engine.recommend(
@@ -153,15 +157,9 @@ def test_graceful_underfill_after_bounded_expansion(monkeypatch):
 
 
 def test_duplicate_paper_ids_are_not_selected(monkeypatch):
-    _install_retrieval(
-        monkeypatch,
-        {
-            0: [_candidate("p0", 0, 1.0), _candidate("p0", 1, 0.99)],
-            1: [_candidate("p1", 1, 0.98), _candidate("p2", 1, 0.97)],
-            2: [_candidate("p3", 2, 0.96), _candidate("p4", 2, 0.95)],
-        },
-        initial_clusters=[0, 1, 2],
-    )
+    candidates = _cluster_candidates(11, per_cluster=2)
+    candidates[0][1] = _candidate("p0-0", 1, 0.99)
+    _install_retrieval(monkeypatch, candidates, initial_clusters=list(range(11)))
 
     recs = engine.recommend(
         np.array([[1.0, 0.0]], dtype=np.float32),
