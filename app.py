@@ -24,6 +24,17 @@ from ui.learning_mode import render_learning_mode, render_workspace_sidebar
 
 DB_PATH = "data/arxiv_rec.db"
 
+
+def _clear_query_search_state() -> None:
+    for key in (
+        "query_search_input",
+        "query_search_time_filter",
+        "query_search_query",
+        "query_search_expanded_query",
+        "query_search_results",
+    ):
+        st.session_state.pop(key, None)
+
 st.set_page_config(
     page_title="ArXiv Daily",
     page_icon="📄",
@@ -83,7 +94,9 @@ else:
 
         if st.button("Explore Mode", use_container_width=True):
             st.session_state["active_tab_value"] = "Daily Feed"
+            st.session_state.pop("active_tab_widget", None)
             st.session_state.pop("overlay_page", None)
+            _clear_query_search_state()
 
         if st.button("Archive", use_container_width=True):
             st.session_state["overlay_page"] = "archive"
@@ -102,6 +115,7 @@ else:
 
     if "requested_tab" in st.session_state:
         st.session_state["active_tab_value"] = st.session_state.pop("requested_tab")
+        st.session_state.pop("active_tab_widget", None)
 
     # Mode pills
     active_tab = st.pills(
