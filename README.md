@@ -151,7 +151,7 @@ python scripts/run_offline_pipeline.py --limit 50000 --hf-endpoint https://hf-mi
 # Full dataset (~4 hours on GPU, overnight on CPU)
 python scripts/run_offline_pipeline.py
 ```
-
+<!--  -->
 ### 3. Launch the app
 
 ```bash
