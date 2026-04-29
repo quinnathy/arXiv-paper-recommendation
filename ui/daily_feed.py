@@ -8,7 +8,7 @@ and persisting the updated centroids.
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import numpy as np
@@ -240,7 +240,14 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     user_id = st.session_state["user_id"]
     user = get_user(user_id)
 
-    st.title(f"Good morning, {user['display_name']}")
+    hour = datetime.now().hour
+    if hour < 12:
+        greeting = "Good morning"
+    elif hour < 18:
+        greeting = "Good afternoon"
+    else:
+        greeting = "Good evening"
+    st.title(f"{greeting}, {user['display_name']}")
     st.caption(date.today().strftime("%A, %B %d, %Y"))
 
     if "shown_ids" not in st.session_state:
@@ -279,8 +286,6 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     if len(recs) < DAILY_FEED_SIZE:
         st.warning("You've seen most papers in your areas. Here's what we found:")
 
-    st.subheader(f"Your {len(recs)} paper{'s' if len(recs) != 1 else ''} for today")
-
     for meta in recs:
         paper_card(
             meta,
@@ -297,12 +302,3 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     if rec_ids and rec_ids.issubset(responded):
         st.success("Come back tomorrow for new recommendations!")
 
-    # Demo button: simulate next day's digest
-    st.divider()
-    if st.button(
-        "Recommend again (demo)",
-        help=f"Fetch a fresh batch of {DAILY_FEED_SIZE} papers to evaluate quality",
-    ):
-        st.session_state.pop("todays_recs", None)
-        st.session_state.pop("responded", None)
-        st.rerun()
