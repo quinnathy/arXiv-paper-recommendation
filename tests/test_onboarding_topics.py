@@ -10,6 +10,7 @@ from ui.components import (
     available_topic_labels,
     build_onboarding_tag_pill_rules,
     expand_topic_labels,
+    onboarding_tag_limit_notice,
     trim_onboarding_tag_selection,
 )
 from ui.onboarding import make_category_seeds_from_topic_labels
@@ -141,6 +142,11 @@ def test_onboarding_tag_pill_rules_gray_only_unselected_tags_at_limit():
     assert "#E5E7EB" in rules[3]
     assert "pointer-events: none" not in "".join(rules[:3])
     assert "#111111" in rules[0]
+
+
+def test_onboarding_tag_limit_notice_shows_at_limit_only():
+    assert onboarding_tag_limit_notice(["A", "B"]) is None
+    assert onboarding_tag_limit_notice(["A", "B", "C"]) is not None
 
 
 def test_onboarding_topic_expansion_pipeline_prints_diagnostics():
