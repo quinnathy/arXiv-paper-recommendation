@@ -33,9 +33,16 @@ class EmbeddingModel:
     def __init__(self) -> None:
         """Load the SPECTER2 base model with the proximity adapter.
 
-        Sets device to "cuda" if a GPU is available, otherwise "cpu".
+        Sets device priority: cuda -> mps -> cpu.
         """
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        has_mps = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif has_mps:
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
+        print(f"[EmbeddingModel] Using device: {self.device}")
         self.tokenizer = AutoTokenizer.from_pretrained(self.MODEL_NAME)
         self.model = AutoAdapterModel.from_pretrained(self.MODEL_NAME)
         self.model.load_adapter(

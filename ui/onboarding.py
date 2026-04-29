@@ -1,69 +1,287 @@
-"""Onboarding page for new users.
-
-Shown when the user has not yet completed the initial setup.
-Collects a display name and topic preferences, then creates a user profile
-with an initial embedding derived from the selected category centroids.
+"""Onboarding page: topic & concept selection, free-text interests,
+optional Scholar profile, and diversity slider.
 """
 
 from __future__ import annotations
 
+import numpy as np
 import streamlit as st
 
+from pipeline.concept_tags import BROAD_CONCEPT_KEYS, CONCEPT_TAG_MAP
+from pipeline.embed import EmbeddingModel
 from pipeline.index import PaperIndex
+from pipeline.interest_expander import embed_free_text_interests
+from pipeline.scholar_parser import load_scholar_papers
+from ui.components import (
+    TOPIC_LABELS,
+    expand_topic_labels,
+    free_text_input,
+    unified_tag_selector,
+)
 from user.db import create_user
-from user.profile import init_embedding_from_topics
-from ui.components import inject_design, topic_selector
+from user.session import login_with_credentials
+from user.profile import (
+    SeedSignal,
+    init_user_profile_v2,
+    make_category_seed,
+    make_concept_seed,
+    make_freetext_seed,
+    make_scholar_seed,
+)
+
+
+@st.cache_resource
+def _get_embed_model() -> EmbeddingModel:
+    return EmbeddingModel()
+
+
+def make_category_seeds_from_topic_labels(
+    selected_labels: list[str],
+    category_centroids: dict[str, np.ndarray],
+) -> list[SeedSignal]:
+    """Build category seeds from human-readable onboarding labels."""
+    topic_keys = expand_topic_labels(
+        selected_labels=selected_labels,
+        topic_labels=TOPIC_LABELS,
+        category_centroids=category_centroids,
+    )
+    if selected_labels and not topic_keys:
+        raise ValueError(
+            "None of the selected onboarding topics are available in the "
+            "current corpus category centroids."
+        )
+
+    seeds: list[SeedSignal] = []
+    for code in topic_keys:
+        label = next(
+            (
+                selected_label
+                for selected_label in selected_labels
+                if code in TOPIC_LABELS.get(selected_label, [])
+            ),
+            code,
+        )
+        seeds.append(make_category_seed(code, label, category_centroids[code]))
+    return seeds
 
 
 def render_onboarding(index: PaperIndex, db_path: str) -> None:
-    """Render the onboarding page for a new (not yet onboarded) user.
+    st.title("ArXiv Daily")
+    st.write("Personalized paper recommendations from arXiv, delivered daily.")
+    st.divider()
+    if "auth_mode" not in st.session_state:
+        st.session_state["auth_mode"] = None
 
-    Args:
-        index: The loaded PaperIndex (needed for category_centroids).
-        db_path: Path to the SQLite database.
-    """
-    
-    inject_design()
-    
-    # Header with Serif font (handled by CSS h1)
-    st.markdown("""
-        <h1>
-            The Morning Briefing <br> for the Modern Researcher
-        </h1>
-    """, unsafe_allow_html=True)    
-    # Description with custom line-height for readability
-    st.markdown("""
-        <p style="font-family: 'Newsreader', serif; line-height: 1.3; font-size: 1.1rem; font-weight:500; color: black;">
-            <b>ArXiv Daily</b> is a personalized discovery engine that cuts through the noise 
-            of over two million scientific publications. We map your research interests into 
-            a high-dimensional geometric space, allowing us to find the <b>semantic fingerprint</b> 
-            of the papers that matter to you most.
-        </p>
-    """, unsafe_allow_html=True)
-    name = st.text_input("Welcome,", placeholder="Enter your display name")
-
-    st.markdown("""
-        <p style="font-family: 'Newsreader', serif; line-height: 1.3; font-size: 1.1rem; font-weight:500; color: black;">
-            What are we interested in today? This will help us create your initial profile and tailor your daily paper recommendations.
-        </p>
-    """, unsafe_allow_html=True)
-    selected_categories = topic_selector(index.category_centroids)
-
-    col1, col2, col3 = st.columns([1, 2, 1])
-
-    with col2:
-        if st.button("Start reading", type="primary", use_container_width=True):
-            if not name.strip():
-                st.error("Please enter your name.")
-            elif not selected_categories:
-                st.error("Please select at least one topic.")
-            else:
-                embedding = init_embedding_from_topics(
-                    selected_categories, index.category_centroids
-                )
-                user_id = create_user(name.strip(), embedding)
-
-                st.session_state["user_id"] = user_id
-                st.session_state["user_embedding"] = embedding
-                st.session_state["onboarded"] = True
+    mode = st.session_state["auth_mode"]
+    if mode is None:
+        st.subheader("Welcome")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("Log in", use_container_width=True):
+                st.session_state["auth_mode"] = "Log in"
                 st.rerun()
+        with col2:
+            if st.button("Sign up", use_container_width=True):
+                st.session_state["auth_mode"] = "Create account"
+                st.rerun()
+        with col3:
+            if st.button("Continue as guest", use_container_width=True):
+                st.session_state["auth_mode"] = "Continue as guest"
+                st.rerun()
+        return
+
+    if mode == "Log in":
+        if st.button("Back"):
+            st.session_state["auth_mode"] = None
+            st.rerun()
+        username = st.text_input("Username", key="login_username")
+        password = st.text_input("Password", type="password", key="login_password")
+        if st.button("Log in", type="primary"):
+            if not username.strip() or not password:
+                st.error("Please enter both username and password.")
+                return
+            if not login_with_credentials(username, password):
+                st.error("Invalid username or password.")
+                return
+            st.success("Welcome back!")
+            st.rerun()
+        return
+
+    if st.button("Back"):
+        st.session_state["auth_mode"] = None
+        st.rerun()
+
+    is_guest = mode == "Continue as guest"
+    if not is_guest:
+        username = st.text_input("Username", placeholder="Choose a username")
+        password = st.text_input("Password", type="password")
+        confirm_password = st.text_input("Confirm password", type="password")
+        name = username.strip()
+    else:
+        st.caption("Guest mode: no account required. Your session is temporary.")
+        username = ""
+        password = ""
+        confirm_password = ""
+        name = st.text_input("Your name", placeholder="Enter your display name")
+
+    st.write("")
+
+    # -- Topic & concept tag selection (unified) --
+    concept_embeddings = index.concept_embeddings or {}
+    st.write("**Pick topics and themes you're interested in:**")
+    if index.concept_embeddings is None:
+        st.caption(
+            "Run `python scripts/build_concept_embeddings.py` to unlock "
+            "more themes."
+        )
+    selected_topic_labels, selected_concepts = unified_tag_selector(
+        index.category_centroids, concept_embeddings,
+    )
+
+    st.write("")
+
+    # -- Free-text interests --
+    free_texts = free_text_input()
+
+    st.write("")
+
+    # -- Optional Scholar profile --
+    st.write("**Paste your Google Scholar profile URL** (optional)")
+    scholar_url = st.text_input(
+        "Google Scholar URL",
+        placeholder="https://scholar.google.com/citations?user=...",
+        label_visibility="collapsed",
+    )
+
+    st.write("")
+
+    # -- Diversity slider --
+    st.write("**Exploration range**")
+    st.caption(
+        "Lower values surface papers closest to your core interests. "
+        "Higher values mix in papers from neighboring fields for serendipity."
+    )
+    diversity = st.slider(
+        "Exploration range",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.5,
+        step=0.1,
+        format="%.1f",
+        label_visibility="collapsed",
+    )
+
+    if st.button("Start reading", type="primary"):
+        if not is_guest:
+            if not username.strip():
+                st.error("Please choose a username.")
+                return
+            if len(password) < 8:
+                st.error("Password must be at least 8 characters.")
+                return
+            if password != confirm_password:
+                st.error("Passwords do not match.")
+                return
+        if not is_guest and not username.strip():
+            st.error("Please choose a username.")
+            return
+        if is_guest and not name.strip():
+            st.error("Please enter your name.")
+            return
+        if (
+            not selected_topic_labels
+            and not selected_concepts
+            and not free_texts
+            and not scholar_url.strip()
+        ):
+            st.error(
+                "Please provide at least one category, theme, free-text "
+                "interest, or Scholar profile."
+            )
+            return
+
+        # -- Assemble seed signals --
+        seeds: list[SeedSignal] = []
+
+        # arXiv categories expanded from human-readable onboarding topics.
+        try:
+            seeds.extend(
+                make_category_seeds_from_topic_labels(
+                    selected_topic_labels,
+                    index.category_centroids,
+                )
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+
+        # Concept tags
+        for key in selected_concepts:
+            tag = CONCEPT_TAG_MAP[key]
+            broad = key in BROAD_CONCEPT_KEYS
+            seeds.append(
+                make_concept_seed(
+                    key,
+                    tag.label,
+                    concept_embeddings[key],
+                    broad=broad,
+                )
+            )
+
+        # Free-text interests
+        if free_texts:
+            with st.spinner("Embedding your interests..."):
+                model = _get_embed_model()
+                for phrase, emb in embed_free_text_interests(free_texts, model):
+                    seeds.append(make_freetext_seed(phrase, emb))
+
+        # Scholar papers
+        papers = None
+        if scholar_url.strip():
+            with st.spinner("Fetching your Scholar profile..."):
+                papers = load_scholar_papers(scholar_url.strip())
+            if papers:
+                with st.spinner("Embedding your papers..."):
+                    model = _get_embed_model()
+                    paper_embeddings = model.embed_papers(papers)
+                    for i, paper in enumerate(papers):
+                        seeds.append(make_scholar_seed(paper["title"], paper_embeddings[i]))
+            else:
+                st.warning("Could not load Scholar profile. "
+                           "Continuing with other signals.")
+
+        # -- Initialize profile --
+        if not seeds:
+            st.error(
+                "Could not build any usable profile seeds. Please add another "
+                "interest signal."
+            )
+            return
+
+        result = init_user_profile_v2(seeds)
+        centroids = result.centroids
+        k_u = centroids.shape[0]
+        try:
+            user_id = create_user(
+                (username.strip() if not is_guest else name.strip()),
+                centroids,
+                k_u,
+                diversity,
+                thread_weights=result.thread_weights,
+                thread_labels=result.thread_labels,
+                username=username.strip() if not is_guest else None,
+                password=password if not is_guest else None,
+            )
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+
+        st.session_state["user_id"] = user_id
+        st.session_state["user_centroids"] = centroids
+        st.session_state["user_k_u"] = k_u
+        st.session_state["user_diversity"] = diversity
+        st.session_state["thread_labels"] = result.thread_labels
+        st.session_state["thread_weights"] = result.thread_weights
+        st.session_state["seed_thread_labels"] = result.seed_labels
+        st.session_state["onboarded"] = True
+        st.rerun()

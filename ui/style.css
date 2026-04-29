@@ -1,0 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=IM+Fell+English:ital@0;1&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap');
+
+/* We target headers explicitly so they don't get lost */
+h1, h2, h3, [data-testid="stHeader"] {
+    font-family: 'IM Fell English', serif !important;
+    font-weight: 700 !important;
+    color: #1a1a1a !important;
+}
+
+/* We only target standard text elements. 
+   We EXCLUDE anything related to 'material' or 'icon' */
+p, li, label, .st-key-tag- p {
+    font-family: 'Newsreader', serif !important;
+    font-size: 1.1rem !important;
+}
+
+/* This forces the browser to treat those strings as shapes, not Newsreader text */
+.material-icons, 
+.material-symbols-outlined, 
+[data-testid="stIcon"],
+span:has(svg),
+[class*="material-symbols"] {
+    font-family: 'Material Symbols Outlined' !important;
+    font-variant-ligatures: normal !important;
+    font-feature-settings: "liga" 1 !important;
+    text-transform: none !important;
+}
+
+div.stButton > button {
+    border-radius: 20px !important;
+    padding: 5px 15px !important;
+    font-family: 'Newsreader', serif !important;
+}
+
+/* This targets the specific headers in your feed/lab without affecting sidebars */
+[data-testid="stMarkdownContainer"] h1, 
+[data-testid="stMarkdownContainer"] h2, 
+[data-testid="stMarkdownContainer"] h3 {
+    font-family: 'IM Fell English', serif !important;
+    font-weight: 700 !important;
+    color: #1a1a1a !important;
+}

@@ -1,19 +1,23 @@
 """SQLite database schema and CRUD operations for user profiles and feedback.
 
 Two tables:
-    users    — stores user profile with serialized embedding blob.
+    users    — stores user profile with serialized multi-vector centroids blob.
     feedback — logs every like/save/skip interaction for analytics and seen_ids.
 
 No ORM; uses plain sqlite3. All writes are synchronous (Streamlit is
 single-user per session, so no threading is needed).
 
-Embedding serialization:
-    Store:  embedding.astype(np.float32).tobytes()
-    Load:   np.frombuffer(blob, dtype=np.float32)
+Centroids serialization:
+    Store:  centroids.astype(np.float32).tobytes()   # shape (k_u, 768) flattened
+    Load:   np.frombuffer(blob, dtype=np.float32).copy().reshape(k_u, 768)
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
+import secrets
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -23,9 +27,9 @@ import numpy as np
 DB_PATH = "data/arxiv_rec.db"
 
 
-def _connect(db_path: str = DB_PATH) -> sqlite3.Connection:
+def _connect(db_path: str | None = None) -> sqlite3.Connection:
     """Return a connection to the SQLite database."""
-    return sqlite3.connect(db_path)
+    return sqlite3.connect(db_path or DB_PATH)
 
 
 def init_db(db_path: str = DB_PATH) -> None:
@@ -40,11 +44,17 @@ def init_db(db_path: str = DB_PATH) -> None:
     conn = _connect(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS users (
-            user_id      TEXT PRIMARY KEY,
-            display_name TEXT NOT NULL,
-            embedding    BLOB NOT NULL,
-            created_at   TEXT NOT NULL,
-            last_active  TEXT NOT NULL
+            user_id        TEXT PRIMARY KEY,
+            display_name   TEXT NOT NULL,
+            username       TEXT,
+            password_hash  TEXT,
+            centroids      BLOB NOT NULL,
+            k_u            INTEGER NOT NULL DEFAULT 1,
+            diversity      REAL NOT NULL DEFAULT 0.5,
+            created_at     TEXT NOT NULL,
+            last_active    TEXT NOT NULL,
+            thread_weights BLOB DEFAULT NULL,
+            thread_labels  TEXT DEFAULT NULL
         )
     """)
     conn.execute("""
@@ -58,33 +68,131 @@ def init_db(db_path: str = DB_PATH) -> None:
             created_at TEXT NOT NULL
         )
     """)
+    # Additive migration: add thread metadata columns if missing.
+    for col in ("thread_weights BLOB DEFAULT NULL",
+                "thread_labels TEXT DEFAULT NULL",
+                "username TEXT",
+                "password_hash TEXT"):
+        try:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+    # for research
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS research_notes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    TEXT NOT NULL,
+            arxiv_id   TEXT NOT NULL,
+            content    TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
 
-def create_user(display_name: str, embedding: np.ndarray) -> str:
+def _hash_password(password: str) -> str:
+    """Return a salted PBKDF2 hash in a compact string format."""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 200_000)
+    return (
+        f"pbkdf2_sha256$200000$"
+        f"{base64.b64encode(salt).decode('ascii')}$"
+        f"{base64.b64encode(digest).decode('ascii')}"
+    )
+
+
+def _verify_password(password: str, encoded_hash: str) -> bool:
+    """Verify a plaintext password against a stored PBKDF2 hash."""
+    try:
+        algorithm, rounds_txt, salt_b64, digest_b64 = encoded_hash.split("$")
+        if algorithm != "pbkdf2_sha256":
+            return False
+        rounds = int(rounds_txt)
+        salt = base64.b64decode(salt_b64.encode("ascii"))
+        expected = base64.b64decode(digest_b64.encode("ascii"))
+    except (ValueError, TypeError):
+        return False
+
+    candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+    return secrets.compare_digest(candidate, expected)
+
+
+def create_user(
+    display_name: str,
+    centroids: np.ndarray,
+    k_u: int,
+    diversity: float = 0.5,
+    thread_weights: np.ndarray | None = None,
+    thread_labels: list[str] | None = None,
+    username: str | None = None,
+    password: str | None = None,
+) -> str:
     """Create a new user record in the database.
 
     Args:
         display_name: The user's display name.
-        embedding: The user's initial embedding, shape (768,), float32, unit-norm.
+        centroids: The user's initial centroids, shape (k_u, 768), float32, unit-norm rows.
+        k_u: Number of research threads (1–3).
+        diversity: The diversity slider value, 0.0–1.0.
+        thread_weights: Optional (k_u,) float32 array of per-thread importance.
+        thread_labels: Optional list of k_u human-readable thread names.
+        username: Optional account username for returning-user login.
+        password: Optional plaintext password (stored as PBKDF2 hash).
 
     Returns:
         The generated user_id (UUID string).
     """
     user_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
-    blob = embedding.astype(np.float32).tobytes()
+    blob = centroids.astype(np.float32).tobytes()
+    tw_blob = thread_weights.astype(np.float32).tobytes() if thread_weights is not None else None
+    tl_json = json.dumps(thread_labels) if thread_labels is not None else None
+    normalized_username = username.strip().lower() if username else None
+    password_hash = _hash_password(password) if password else None
 
     conn = _connect()
+    if normalized_username:
+        exists = conn.execute(
+            "SELECT 1 FROM users WHERE username = ?",
+            (normalized_username,),
+        ).fetchone()
+        if exists is not None:
+            conn.close()
+            raise ValueError("Username already exists.")
+
     conn.execute(
-        "INSERT INTO users (user_id, display_name, embedding, created_at, last_active) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (user_id, display_name, blob, now, now),
+        "INSERT INTO users (user_id, display_name, username, password_hash, centroids, "
+        "k_u, diversity, created_at, last_active, thread_weights, thread_labels) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            user_id,
+            display_name,
+            normalized_username,
+            password_hash,
+            blob,
+            k_u,
+            diversity,
+            now,
+            now,
+            tw_blob,
+            tl_json,
+        ),
     )
     conn.commit()
     conn.close()
     return user_id
+
+
+def _default_thread_weights(k_u: int) -> np.ndarray:
+    if k_u <= 0:
+        return np.array([], dtype=np.float32)
+    return np.full(k_u, 1.0 / k_u, dtype=np.float32)
+
+
+def _default_thread_labels(k_u: int) -> list[str]:
+    return [f"Thread {i + 1}" for i in range(k_u)]
 
 
 def get_user(user_id: str) -> dict | None:
@@ -94,12 +202,14 @@ def get_user(user_id: str) -> dict | None:
         user_id: The UUID string of the user.
 
     Returns:
-        Dict with keys: user_id, display_name, embedding (np.ndarray float32),
-        created_at, last_active. Returns None if user not found.
+        Dict with keys: user_id, display_name, centroids (np.ndarray shape (k_u, 768)),
+        k_u, diversity, created_at, last_active, thread_weights, thread_labels.
+        Returns None if user not found.
     """
     conn = _connect()
     row = conn.execute(
-        "SELECT user_id, display_name, embedding, created_at, last_active "
+        "SELECT user_id, display_name, username, centroids, k_u, diversity, "
+        "created_at, last_active, thread_weights, thread_labels "
         "FROM users WHERE user_id = ?",
         (user_id,),
     ).fetchone()
@@ -108,28 +218,74 @@ def get_user(user_id: str) -> dict | None:
     if row is None:
         return None
 
+    k_u = row[4]
+    tw_blob = row[8]
+    tl_text = row[9]
+
+    thread_weights = _default_thread_weights(k_u)
+    if tw_blob is not None:
+        loaded_weights = np.frombuffer(tw_blob, dtype=np.float32).copy()
+        if loaded_weights.shape == (k_u,):
+            thread_weights = loaded_weights
+
+    thread_labels = _default_thread_labels(k_u)
+    if tl_text is not None:
+        try:
+            loaded_labels = json.loads(tl_text)
+        except json.JSONDecodeError:
+            loaded_labels = None
+        if (
+            isinstance(loaded_labels, list)
+            and len(loaded_labels) == k_u
+            and all(isinstance(label, str) for label in loaded_labels)
+        ):
+            thread_labels = loaded_labels
+
     return {
         "user_id": row[0],
         "display_name": row[1],
-        "embedding": np.frombuffer(row[2], dtype=np.float32).copy(),
-        "created_at": row[3],
-        "last_active": row[4],
+        "username": row[2],
+        "centroids": np.frombuffer(row[3], dtype=np.float32).copy().reshape(k_u, 768),
+        "k_u": k_u,
+        "diversity": row[5],
+        "created_at": row[6],
+        "last_active": row[7],
+        "thread_weights": thread_weights,
+        "thread_labels": thread_labels,
     }
 
 
-def update_embedding(user_id: str, embedding: np.ndarray) -> None:
-    """Update a user's embedding in the database.
+def authenticate_user(username: str, password: str) -> dict | None:
+    """Authenticate by username/password and return user payload on success."""
+    normalized_username = username.strip().lower()
+    conn = _connect()
+    row = conn.execute(
+        "SELECT user_id, password_hash FROM users WHERE username = ?",
+        (normalized_username,),
+    ).fetchone()
+    conn.close()
+
+    if row is None:
+        return None
+    user_id, password_hash = row
+    if not password_hash or not _verify_password(password, password_hash):
+        return None
+    return get_user(user_id)
+
+
+def update_centroids(user_id: str, centroids: np.ndarray) -> None:
+    """Update a user's centroids in the database.
 
     Args:
         user_id: The UUID string of the user.
-        embedding: The new embedding, shape (768,), float32, unit-norm.
+        centroids: The new centroids, shape (k_u, 768), float32, unit-norm rows.
     """
     now = datetime.now(timezone.utc).isoformat()
-    blob = embedding.astype(np.float32).tobytes()
+    blob = centroids.astype(np.float32).tobytes()
 
     conn = _connect()
     conn.execute(
-        "UPDATE users SET embedding = ?, last_active = ? WHERE user_id = ?",
+        "UPDATE users SET centroids = ?, last_active = ? WHERE user_id = ?",
         (blob, now, user_id),
     )
     conn.commit()
@@ -181,3 +337,66 @@ def get_seen_ids(user_id: str) -> set[str]:
     conn.close()
 
     return {row[0] for row in rows}
+
+
+def get_saved_papers(user_id: str) -> list[dict]:
+    """Get all papers this user saved, newest first.
+
+    Returns:
+        List of dicts with keys: arxiv_id, score, created_at.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT arxiv_id, score, created_at FROM feedback "
+        "WHERE user_id = ? AND signal = 'save' "
+        "ORDER BY created_at DESC",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+
+    return [
+        {"arxiv_id": r[0], "score": r[1], "created_at": r[2]}
+        for r in rows
+    ]
+
+
+def get_feedback_counts(user_id: str) -> dict[str, int]:
+    """Get counts of each feedback type for a user.
+
+    Returns:
+        Dict with keys 'like', 'save', 'skip' mapped to counts.
+    """
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT signal, COUNT(*) FROM feedback "
+        "WHERE user_id = ? GROUP BY signal",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+
+    counts = {"like": 0, "save": 0, "skip": 0}
+    for signal, count in rows:
+        counts[signal] = count
+    return counts
+
+
+# research mode
+def save_research_note(user_id: str, content: str, source_arxiv_id: str = None):
+    now = datetime.now(timezone.utc).isoformat()
+    conn = _connect()
+    conn.execute(
+        "INSERT INTO research_notes (user_id, content, arxiv_id, created_at) VALUES (?, ?, ?, ?)",
+        (user_id, content, source_arxiv_id, now)
+    )
+    conn.commit()
+    conn.close()
+
+def get_all_notes(user_id: str):
+    conn = _connect()
+    # Order by created_at so it feels like a chronological "wall"
+    rows = conn.execute(
+        "SELECT content, arxiv_id, created_at FROM research_notes WHERE user_id = ? ORDER BY created_at ASC",
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    return rows

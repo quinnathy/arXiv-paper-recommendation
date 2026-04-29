@@ -1,7 +1,20 @@
 streamlit>=1.35
 numpy>=1.26
 scikit-learn>=1.4
+pandas>=2.2
+plotly>=5.20
+kaleido>=0.2
+umap-learn>=0.5.6
 transformers>=4.40
 adapters>=1.0
 kagglehub>=0.2
 torch>=2.2          # CPU-only is fine
+beautifulsoup4>=4.12
+requests>=2.31
+pytest>=8.0
+
+# --- Research Mode & Transcription ---
+fpdf2>=2.7.8
+marker-pdf>=0.3.0
+pymupdf>=1.24.0
+pillow>=10.0.0

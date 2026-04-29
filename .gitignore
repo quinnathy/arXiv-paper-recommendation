@@ -1,10 +1,6 @@
 # Generated data artifacts
-data/embeddings.npy
-data/cluster_ids.npy
-data/centroids.npy
-data/category_centroids.npy
-data/paper_meta.jsonl
-data/arxiv_rec.db
+data/*
+!data/.gitkeep
 
 # Python
 __pycache__/
@@ -15,3 +11,6 @@ __pycache__/
 .env
 .venv/
 venv/
+
+.DS_Store
+.vscode/

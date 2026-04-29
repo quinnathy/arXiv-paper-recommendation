@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from pipeline.concept_tags import load_concept_embedding_artifacts
+
 
 class PaperIndex:
     """Holds all data needed for serving recommendations.
@@ -24,6 +26,9 @@ class PaperIndex:
         centroids: Shape (k, 768) float32 — unit-norm cluster centroids.
         category_centroids: Dict mapping arXiv category string to unit-norm
             centroid vector (shape (768,) float32).
+        concept_embeddings: Dict mapping concept tag key to unit-norm
+            embedding vector (shape (768,) float32), if the standalone concept
+            artifact has been built.
         paper_meta: Length-N list of dicts — paper metadata (id, title,
             abstract, categories, update_date, cluster_id).
 
@@ -43,6 +48,7 @@ class PaperIndex:
         self.cluster_ids: np.ndarray | None = None
         self.centroids: np.ndarray | None = None
         self.category_centroids: dict[str, np.ndarray] | None = None
+        self.concept_embeddings: dict[str, np.ndarray] | None = None
         self.paper_meta: list[dict] | None = None
 
     def load(self) -> None:
@@ -53,6 +59,8 @@ class PaperIndex:
             - cluster_ids.npy   -> self.cluster_ids (N,) int32
             - centroids.npy     -> self.centroids   (k, 768) float32
             - category_centroids.npy -> self.category_centroids dict
+            - concept_embeddings.npy/meta.json -> self.concept_embeddings dict
+              if present
             - paper_meta.jsonl  -> self.paper_meta  list[dict]
 
         After loading, verifies that len(embeddings) == len(paper_meta).
@@ -64,12 +72,17 @@ class PaperIndex:
         if not embeddings_path.exists():
             return  # Data not ready; is_loaded() will return False
 
-        self.embeddings = np.load(data / "embeddings.npy")
+        # self.embeddings = np.load(data / "embeddings.npy")
+        self.embeddings = np.load(data / "embeddings.npy", mmap_mode="r")
         self.cluster_ids = np.load(data / "cluster_ids.npy")
         self.centroids = np.load(data / "centroids.npy")
         self.category_centroids = np.load(
             data / "category_centroids.npy", allow_pickle=True
         ).item()
+        try:
+            self.concept_embeddings = load_concept_embedding_artifacts(data)
+        except FileNotFoundError:
+            self.concept_embeddings = None
 
         self.paper_meta = []
         with open(data / "paper_meta.jsonl", "r", encoding="utf-8") as fh:
@@ -84,7 +97,8 @@ class PaperIndex:
         print(f"PaperIndex loaded: {len(self.paper_meta)} papers, "
               f"{self.embeddings.nbytes / 1e9:.2f} GB embeddings, "
               f"{self.centroids.shape[0]} clusters, "
-              f"{len(self.category_centroids)} categories")
+              f"{len(self.category_centroids)} categories, "
+              f"{len(self.concept_embeddings or {})} concepts")
 
     def is_loaded(self) -> bool:
         """Check whether the index has been successfully loaded.
