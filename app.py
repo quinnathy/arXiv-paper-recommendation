@@ -64,92 +64,46 @@ if not index.is_loaded():
     st.stop()
 
 # -- route -----------------------------------------------------------------
-# -- route -----------------------------------------------------------------
 if not is_onboarded():
     render_onboarding(index, DB_PATH)
 else:
     # 1. --- LEFT SIDEBAR (Native Navigation) ---
     with st.sidebar:
         user_id = st.session_state["user_id"]
-        user_data = get_user(user_id) #
+        user_data = get_user(user_id)
 
         # Profile Image and Name
         st.image("https://www.gravatar.com/avatar/0000?d=mp&f=y", width=60)
         st.markdown(f"**{user_data['display_name']}**")
 
-        if st.button("👤 User Profile", use_container_width=True):
+        if st.button("User Profile", use_container_width=True):
             st.session_state["overlay_page"] = "profile"
 
-        st.markdown(
-            """<style>
-            /* Sidebar nav buttons — bookmark style */
-            section[data-testid='stSidebar'] button[kind='secondary'] {
-                font-size: 1rem !important;
-                font-weight: 600 !important;
-                padding: 0.6rem 1rem !important;
-                border-radius: 0.5rem !important;
-                text-align: left !important;
-                justify-content: flex-start !important;
-            }
-            /* Log-out button — outlined / distinct */
-            section[data-testid='stSidebar'] button[kind='secondary'].logout-btn,
-            section[data-testid='stSidebar'] div[data-testid='stButton']:last-child button {
-                font-weight: 400 !important;
-                border: 1px solid rgba(150,150,150,0.4) !important;
-                background: transparent !important;
-                color: inherit !important;
-                font-size: 0.9rem !important;
-                padding: 0.4rem 1rem !important;
-            }
-            </style>""",
-            unsafe_allow_html=True,
-        )
-        profile_clicked = st.button("User Profile", use_container_width=True)
         st.divider()
 
-        if st.button("🔍 Explore Mode", use_container_width=True):
-            st.session_state["active_tab"] = "Daily Feed"
+        if st.button("Explore Mode", use_container_width=True):
+            st.session_state["active_tab_value"] = "Daily Feed"
             st.session_state.pop("overlay_page", None)
 
-        if st.button("📂 Archive", use_container_width=True):
+        if st.button("Archive", use_container_width=True):
             st.session_state["overlay_page"] = "archive"
 
-        # Spacer replacement for st.spacer
+        # Spacer replacement
         st.markdown("<br>" * 5, unsafe_allow_html=True)
-        if st.button("🚪 Log out", use_container_width=True):
+        
+        if st.button("Log out", use_container_width=True):
             logout_user()
             st.rerun()
 
-    # --- Mode pills (main content area) ---
-    st.markdown(
-        """<style>
-        div[data-testid='stPills'] div[role='tablist'] button {
-            font-size: 1.05rem !important;
-            padding: 0.45rem 1.6rem !important;
-            font-weight: 600 !important;
-            border-radius: 2rem !important;
-        }
-        div[data-testid='stPills'] div[role='tablist'] button[aria-checked='true'] {
-            font-weight: 700 !important;
-        }
-        </style>""",
-        unsafe_allow_html=True,
-    )
+    # 2. --- MAIN CONTENT AREA ---
+    # Syncing tab state
     if "active_tab_value" not in st.session_state:
-        st.session_state["active_tab_value"] = st.session_state.pop(
-            "active_tab", "Daily Feed"
-        )
-
-    if st.session_state["active_tab_value"] == "Learning Mode":
-        st.session_state["active_tab_value"] = "Workspace"
+        st.session_state["active_tab_value"] = st.session_state.pop("active_tab", "Daily Feed")
 
     if "requested_tab" in st.session_state:
         st.session_state["active_tab_value"] = st.session_state.pop("requested_tab")
-        st.session_state.pop("active_tab_widget", None)
 
-    if st.session_state["active_tab_value"] == "Learning Mode":
-        st.session_state["active_tab_value"] = "Workspace"
-
+    # Mode pills
     active_tab = st.pills(
         "mode",
         options=["Daily Feed", "Workspace", "Research Lab"],
@@ -159,19 +113,26 @@ else:
     )
     st.session_state["active_tab_value"] = active_tab
 
+    # Right Sidebar (Folders/Files)
     render_workspace_sidebar(index, active_tab)
 
-    # Persist overlay selection across reruns
-    if profile_clicked:
-        st.session_state["overlay_page"] = "profile"
-
+    # 3. --- ROUTING ---
     overlay = st.session_state.get("overlay_page")
+    
     if overlay == "profile":
-        if st.button("← Back"):
+        if st.button("← Back to Feed"):
             st.session_state.pop("overlay_page", None)
             st.rerun()
-        render_profile_page()
+        render_profile_page(index)
+    
+    elif overlay == "archive":
+        if st.button("← Back to Feed"):
+            st.session_state.pop("overlay_page", None)
+            st.rerun()
+        render_archive_page()
+        
     else:
+        # Standard Mode Routing
         if active_tab == "Research Lab":
             render_research_mode(index)
         elif active_tab == "Workspace":
