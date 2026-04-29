@@ -10,12 +10,16 @@ Provides self-contained components that can be composed into pages:
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 from typing import Callable
 
 import numpy as np
 import streamlit as st
 
 from pipeline.concept_tags import CONCEPT_TAG_MAP
+
+MAX_ONBOARDING_TAGS = 3
+ONBOARDING_TAG_PILLS_KEY = "onboarding_tag_pills"
 
 
 # Human-readable onboarding label -> one or more arXiv category codes.
@@ -280,6 +284,62 @@ def paper_card(
                 on_skip(arxiv_id)
 
 
+def trim_onboarding_tag_selection(
+    selected_labels: Sequence[str] | str | None,
+    limit: int = MAX_ONBOARDING_TAGS,
+    valid_options: Sequence[str] | None = None,
+) -> list[str]:
+    """Keep at most ``limit`` selected onboarding tag labels."""
+    if selected_labels is None:
+        return []
+    if isinstance(selected_labels, str):
+        labels = [selected_labels]
+    else:
+        labels = list(selected_labels)
+    if valid_options is not None:
+        valid = set(valid_options)
+        labels = [label for label in labels if label in valid]
+    return labels[:limit]
+
+
+def build_onboarding_tag_pill_rules(
+    options: Sequence[str],
+    option_colors: Sequence[str],
+    selected_labels: Sequence[str] | None,
+    limit: int = MAX_ONBOARDING_TAGS,
+) -> list[str]:
+    """Build CSS rules for colored pills and capped disabled choices."""
+    selected = set(selected_labels or [])
+    at_limit = len(selected) >= limit
+
+    rules: list[str] = []
+    for i, (label, color) in enumerate(zip(options, option_colors), start=1):
+        selector = (
+            "div[data-testid='stPills'] div[role='tablist'] "
+            f"button:nth-child({i}):not([aria-checked='true'])"
+        )
+        if at_limit and label not in selected:
+            rules.append(
+                f"{selector} {{ background-color: #E5E7EB !important; "
+                "border-color: #D1D5DB !important; "
+                "color: #6B7280 !important; "
+                "pointer-events: none !important; "
+                "cursor: not-allowed !important; }}"
+            )
+        else:
+            rules.append(
+                f"{selector} {{ background-color: {color} !important; "
+                f"border-color: {color} !important; }}"
+            )
+    return rules
+
+
+def _trim_onboarding_tag_pill_state() -> None:
+    st.session_state[ONBOARDING_TAG_PILLS_KEY] = trim_onboarding_tag_selection(
+        st.session_state.get(ONBOARDING_TAG_PILLS_KEY, [])
+    )
+
+
 def unified_tag_selector(
     category_centroids: dict[str, np.ndarray],
     concept_embeddings: dict[str, np.ndarray],
@@ -328,16 +388,21 @@ def unified_tag_selector(
     color_rng = random.Random(st.session_state["tag_order_seed"] + 1)
     option_colors = [color_rng.choice(_PILL_PALETTE) for _ in options]
 
-    # Build per-pill CSS rules — use descendant selectors (Streamlit wraps
-    # the tablist in an extra <div> so direct-child `>` doesn't reach it).
-    pill_rules = []
-    for i, color in enumerate(option_colors):
-        pill_rules.append(
-            f"div[data-testid='stPills'] div[role='tablist'] "
-            f"button:nth-child({i + 1}):not([aria-checked='true']) "
-            f"{{ background-color: {color} !important; "
-            f"border-color: {color} !important; }}"
-        )
+    stored_selection = st.session_state.get(ONBOARDING_TAG_PILLS_KEY, [])
+    current_selection = trim_onboarding_tag_selection(
+        stored_selection,
+        valid_options=options,
+    )
+    if (
+        ONBOARDING_TAG_PILLS_KEY in st.session_state
+        and current_selection != stored_selection
+    ):
+        st.session_state[ONBOARDING_TAG_PILLS_KEY] = current_selection
+    pill_rules = build_onboarding_tag_pill_rules(
+        options,
+        option_colors,
+        current_selection,
+    )
 
     # Slow horizontal scroll animation for the pill container
     scroll_css = """
@@ -368,11 +433,12 @@ def unified_tag_selector(
         options=options,
         selection_mode="multi",
         default=None,
+        key=ONBOARDING_TAG_PILLS_KEY,
+        on_change=_trim_onboarding_tag_pill_state,
         label_visibility="collapsed",
     )
 
-    if not selected_labels:
-        selected_labels = []
+    selected_labels = trim_onboarding_tag_selection(selected_labels)
 
     # Partition selections back into topic labels and concepts.
     topic_labels: list[str] = []
