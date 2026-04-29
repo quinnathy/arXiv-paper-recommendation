@@ -13,6 +13,7 @@ from pipeline.index import PaperIndex
 from pipeline.interest_expander import embed_free_text_interests
 from pipeline.scholar_parser import load_scholar_papers
 from ui.components import (
+    MAX_ONBOARDING_TAGS,
     TOPIC_LABELS,
     expand_topic_labels,
     free_text_input,
@@ -187,6 +188,9 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
             return
         if is_guest and not name.strip():
             st.error("Please enter your name.")
+            return
+        if len(selected_topic_labels) + len(selected_concepts) > MAX_ONBOARDING_TAGS:
+            st.error(f"Please choose at most {MAX_ONBOARDING_TAGS} tags.")
             return
         if (
             not selected_topic_labels

@@ -5,7 +5,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from ui.components import available_topic_labels, expand_topic_labels
+from ui.components import (
+    MAX_ONBOARDING_TAGS,
+    available_topic_labels,
+    build_onboarding_tag_pill_rules,
+    expand_topic_labels,
+    trim_onboarding_tag_selection,
+)
 from ui.onboarding import make_category_seeds_from_topic_labels
 from user.profile import init_user_profile_v2
 
@@ -92,6 +98,49 @@ def test_empty_expansion_produces_clear_onboarding_error():
             ["Unavailable Topic"],
             category_centroids,
         )
+
+
+def test_onboarding_tag_selection_is_trimmed_to_limit():
+    selected = ["A", "B", "C", "D", "E"]
+
+    assert trim_onboarding_tag_selection(selected) == selected[:MAX_ONBOARDING_TAGS]
+
+
+def test_onboarding_tag_selection_drops_unavailable_options_before_limit():
+    selected = ["A", "Missing", "B", "C", "D"]
+
+    assert trim_onboarding_tag_selection(
+        selected,
+        valid_options=["A", "B", "C", "D"],
+    ) == ["A", "B", "C"]
+
+
+def test_onboarding_tag_pill_rules_keep_unselected_clickable_below_limit():
+    rules = build_onboarding_tag_pill_rules(
+        options=["A", "B", "C", "D"],
+        option_colors=["#111111", "#222222", "#333333", "#444444"],
+        selected_labels=["A", "B"],
+    )
+    css = "".join(rules)
+
+    assert "#444444" in css
+    assert "pointer-events: none" not in css
+    assert "#E5E7EB" not in css
+
+
+def test_onboarding_tag_pill_rules_gray_only_unselected_tags_at_limit():
+    rules = build_onboarding_tag_pill_rules(
+        options=["A", "B", "C", "D"],
+        option_colors=["#111111", "#222222", "#333333", "#444444"],
+        selected_labels=["A", "B", "C"],
+    )
+    css = "".join(rules)
+
+    assert "button:nth-child(4):not([aria-checked='true'])" in css
+    assert "pointer-events: none" in rules[3]
+    assert "#E5E7EB" in rules[3]
+    assert "pointer-events: none" not in "".join(rules[:3])
+    assert "#111111" in rules[0]
 
 
 def test_onboarding_topic_expansion_pipeline_prints_diagnostics():
