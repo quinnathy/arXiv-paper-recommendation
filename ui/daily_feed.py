@@ -241,7 +241,9 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     user = get_user(user_id)
 
     hour = datetime.now().hour
-    if hour < 12:
+    if hour < 5:
+        greeting = "Good evening"
+    elif hour < 12:
         greeting = "Good morning"
     elif hour < 18:
         greeting = "Good afternoon"
