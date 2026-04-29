@@ -13,6 +13,35 @@ from user.session import save_centroids_to_session
 from ui.components import paper_card
 
 
+QUERY_SEARCH_EXAMPLES = [
+    "retrieval-augmented generation for factual and citation-grounded LLMs",
+    "diffusion models for medical image reconstruction with limited labels",
+    "graph neural networks for molecular property prediction and drug discovery",
+    "reinforcement learning for safe robotic navigation in uncertain environments",
+    "neural operators for weather forecasting and climate downscaling",
+    "multimodal learning across text, image, audio, and video",
+    "privacy-preserving federated learning for distributed healthcare data",
+    "interpretable machine learning for genomics and single-cell data",
+    "AI alignment methods for scalable oversight and reward modeling",
+    "time series forecasting for financial and macroeconomic data",
+    "representation learning for neural population activity and behavior",
+    "efficient transformers for sparse attention and long-context inference",
+    "causal inference for treatment effects in observational healthcare data",
+    "formal verification and program synthesis for code correctness",
+    "autonomous driving perception and planning under uncertainty",
+    "recommender systems balancing personalization, diversity, and fairness",
+    "variational quantum algorithms and quantum machine learning",
+    "speech recognition for noisy multilingual low-resource settings",
+    "optimization methods for sharpness-aware and generalizable deep learning",
+]
+
+
+def _rotating_search_placeholder() -> str:
+    idx = st.session_state.get("query_search_example_idx", 0)
+    st.session_state["query_search_example_idx"] = idx + 1
+    return QUERY_SEARCH_EXAMPLES[idx % len(QUERY_SEARCH_EXAMPLES)]
+
+
 @st.cache_resource
 def _get_query_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
@@ -49,17 +78,21 @@ def _handle_search_feedback(arxiv_id: str, signal: str, index: PaperIndex) -> No
 def render_query_search(index: PaperIndex) -> None:
     user_id = st.session_state["user_id"]
 
-    with st.form("query_search_form"):
-        query = st.text_input(
-            "Search papers",
-            placeholder="healthcare AI, medical image segmentation, LoRA...",
-        )
+    st.markdown("**Search papers by topic, method, dataset, or research question...**")
+    query = st.text_input(
+        "Search papers by topic, method, dataset, or research question...",
+        placeholder=_rotating_search_placeholder(),
+        key="query_search_input",
+        label_visibility="collapsed",
+    )
+    with st.expander("Search options", expanded=False):
         time_filter_label = st.selectbox(
             "Time range",
             options=["All time", "Past year", "Past 6 months", "Past 30 days"],
             index=0,
+            key="query_search_time_filter",
         )
-        submitted = st.form_submit_button("Search")
+    submitted = st.button("Search", key="query_search_submit")
 
     if submitted and query.strip():
         time_filter_days = {
