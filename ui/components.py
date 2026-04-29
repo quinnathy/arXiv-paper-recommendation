@@ -20,6 +20,10 @@ from pipeline.concept_tags import CONCEPT_TAG_MAP
 
 MAX_ONBOARDING_TAGS = 3
 ONBOARDING_TAG_PILLS_KEY = "onboarding_tag_pills"
+ONBOARDING_TAG_LIMIT_NOTICE = (
+    f"You can select at most {MAX_ONBOARDING_TAGS} tags. "
+    "Deselect one to choose another."
+)
 
 
 # Human-readable onboarding label -> one or more arXiv category codes.
@@ -334,6 +338,16 @@ def build_onboarding_tag_pill_rules(
     return rules
 
 
+def onboarding_tag_limit_notice(
+    selected_labels: Sequence[str] | None,
+    limit: int = MAX_ONBOARDING_TAGS,
+) -> str | None:
+    """Return the onboarding tag limit notice when the cap is reached."""
+    if len(selected_labels or []) >= limit:
+        return ONBOARDING_TAG_LIMIT_NOTICE
+    return None
+
+
 def _trim_onboarding_tag_pill_state() -> None:
     st.session_state[ONBOARDING_TAG_PILLS_KEY] = trim_onboarding_tag_selection(
         st.session_state.get(ONBOARDING_TAG_PILLS_KEY, [])
@@ -439,6 +453,8 @@ def unified_tag_selector(
     )
 
     selected_labels = trim_onboarding_tag_selection(selected_labels)
+    if notice := onboarding_tag_limit_notice(selected_labels):
+        st.caption(notice)
 
     # Partition selections back into topic labels and concepts.
     topic_labels: list[str] = []
