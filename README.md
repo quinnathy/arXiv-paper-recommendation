@@ -1,6 +1,6 @@
 # ArXiv Daily
 
-A personalized paper recommendation engine that surfaces 20 arXiv papers daily, tailored to your research interests. Built with Streamlit, SPECTER2 embeddings, and a lightweight local stack — no cloud services or external databases required.
+A personalized paper recommendation engine & research tool that surfaces 20 arXiv papers daily, tailored to your interests. Built with Streamlit, SPECTER2 embeddings, and a lightweight local stack — no cloud services or external databases required.
 
 ## How It Works
 
