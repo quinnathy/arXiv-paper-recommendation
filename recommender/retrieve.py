@@ -16,6 +16,11 @@ import math
 import numpy as np
 
 from pipeline.index import PaperIndex
+from recommender.config import (
+    DAILY_CANDIDATE_POOL_SIZE,
+    DAILY_CLUSTER_BUDGET_BASE,
+    DAILY_CLUSTER_BUDGET_DIVERSITY_MULTIPLIER,
+)
 
 
 def _is_withdrawn_paper(meta: dict) -> bool:
@@ -43,8 +48,8 @@ def find_nearest_clusters(
 ) -> list[int]:
     """Find clusters to search, distributing budget across user centroids.
 
-    The total cluster budget is ceil(2 + diversity * 3):
-        δ=0.0 → 2 clusters, δ=0.5 → 4, δ=1.0 → 5.
+    The total cluster budget is ceil(4 + diversity * 8):
+        δ=0.0 → 4 clusters, δ=0.5 → 8, δ=1.0 → 12.
     Budget is split evenly across the user's k_u centroids (at least 1 each).
 
     Args:
@@ -55,7 +60,10 @@ def find_nearest_clusters(
     Returns:
         Deduplicated list of cluster indices to search.
     """
-    total_budget = math.ceil(2 + diversity * 3)
+    total_budget = math.ceil(
+        DAILY_CLUSTER_BUDGET_BASE
+        + diversity * DAILY_CLUSTER_BUDGET_DIVERSITY_MULTIPLIER
+    )
     k_u = user_centroids.shape[0]
     per_centroid = max(1, total_budget // k_u)
 
@@ -73,7 +81,7 @@ def knn_in_clusters(
     target_cluster_ids: list[int],
     index: PaperIndex,
     seen_ids: set[str],
-    k: int = 40,
+    k: int = DAILY_CANDIDATE_POOL_SIZE,
 ) -> list[tuple[float, dict, int]]:
     """Find the k most similar papers within the specified clusters.
 
