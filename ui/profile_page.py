@@ -5,9 +5,10 @@ from __future__ import annotations
 import streamlit as st
 
 from user.db import get_user, get_seen_ids, get_feedback_counts
+from ui.daily_feed import _render_embedding_space
 
 
-def render_profile_page() -> None:
+def render_profile_page(index) -> None:
     """Render the user profile page."""
     user_id = st.session_state["user_id"]
     user = get_user(user_id)
@@ -57,6 +58,16 @@ def render_profile_page() -> None:
             st.markdown(f"- {label}{weight_pct}")
     else:
         st.write(f"{k_u} thread{'s' if k_u != 1 else ''}")
+
+    st.divider()
+
+    # --- Moving the Embedding Space Viz here ---
+    st.subheader("Your Research Footprint")
+    st.caption("This map shows where your interests lie relative to the ArXiv corpus.")
+    
+    # We pass an empty list for 'recs' since we are in profile mode, 
+    # or you can pass st.session_state.get("todays_recs", [])
+    _render_embedding_space(index, st.session_state.get("todays_recs", []))
 
     st.divider()
 
