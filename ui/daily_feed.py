@@ -29,6 +29,7 @@ from user.db import (
 from user.profile import apply_feedback
 from user.session import save_centroids_to_session
 from ui.components import paper_card
+from ui.domain_jokes import select_domain_joke
 
 
 VIZ_ARTIFACTS = (
@@ -251,6 +252,14 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
         greeting = "Good evening"
     st.title(f"{greeting}, {user['display_name']}")
     st.caption(date.today().strftime("%A, %B %d, %Y"))
+
+    try:
+        centroids = st.session_state.get("user_centroids")
+        joke = select_domain_joke(centroids, user_id)
+        if joke:
+            st.caption(joke["joke"])
+    except Exception:
+        pass
 
     if "shown_ids" not in st.session_state:
         st.session_state["shown_ids"] = set()
