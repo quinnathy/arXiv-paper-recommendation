@@ -24,6 +24,19 @@ from ui.learning_mode import render_learning_mode, render_workspace_sidebar
 
 DB_PATH = "data/arxiv_rec.db"
 
+
+def _clear_query_search_state() -> None:
+    for key in (
+        "query_search_input",
+        "query_search_time_filter",
+        "query_search_options_open",
+        "query_search_query",
+        "query_search_expanded_query",
+        "query_search_results",
+    ):
+        st.session_state.pop(key, None)
+
+
 st.set_page_config(
     page_title="ArXiv Daily",
     page_icon="📄",
@@ -83,14 +96,15 @@ else:
 
         if st.button("Explore Mode", width="stretch"):
             st.session_state["active_tab_value"] = "Daily Feed"
+            st.session_state.pop("active_tab_widget", None)
             st.session_state.pop("overlay_page", None)
+            _clear_query_search_state()
 
         if st.button("Archive", width="stretch"):
             st.session_state["overlay_page"] = "archive"
 
-        # Spacer replacement
         st.markdown("<br>" * 5, unsafe_allow_html=True)
-        
+
         if st.button("Log out", width="stretch"):
             logout_user()
             st.rerun()
@@ -100,11 +114,9 @@ else:
     if "active_tab_value" not in st.session_state:
         st.session_state["active_tab_value"] = st.session_state.pop("active_tab", "Daily Feed")
 
-    forced_tab = None
     if "requested_tab" in st.session_state:
-        requested_tab = st.session_state.pop("requested_tab")
-        st.session_state["active_tab_value"] = requested_tab
-        forced_tab = requested_tab
+        st.session_state["active_tab_value"] = st.session_state.pop("requested_tab")
+        st.session_state.pop("active_tab_widget", None)
 
     # Mode pills
     active_tab = st.pills(
@@ -114,8 +126,6 @@ else:
         key="active_tab_widget",
         label_visibility="collapsed",
     )
-    if forced_tab is not None:
-        active_tab = forced_tab
     st.session_state["active_tab_value"] = active_tab
 
     # Right Sidebar (Folders/Files)
@@ -123,19 +133,19 @@ else:
 
     # 3. --- ROUTING ---
     overlay = st.session_state.get("overlay_page")
-    
+
     if overlay == "profile":
         if st.button("← Back to Feed"):
             st.session_state.pop("overlay_page", None)
             st.rerun()
         render_profile_page(index)
-    
+
     elif overlay == "archive":
         if st.button("← Back to Feed"):
             st.session_state.pop("overlay_page", None)
             st.rerun()
         render_archive_page()
-        
+
     else:
         # Standard Mode Routing
         if active_tab == "Research Lab":

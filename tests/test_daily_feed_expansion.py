@@ -15,6 +15,7 @@ from recommender.retrieve import find_nearest_clusters
 from user.db import (
     create_user,
     get_feedback_counts,
+    get_interacted_paper_count,
     get_seen_ids,
     init_db,
     log_feedback,
@@ -153,9 +154,11 @@ def test_seen_papers_are_excluded_and_served_papers_are_marked_seen(tmp_path):
 
     mark_papers_seen(uid, ["served-final", "served-final"])
     log_feedback(uid, "liked-paper", "like", cluster_id=1, score=0.9)
+    log_feedback(uid, "liked-paper", "like", cluster_id=1, score=0.9)
 
     assert get_seen_ids(uid) == {"served-final", "liked-paper"}
-    assert get_feedback_counts(uid) == {"like": 1, "save": 0, "skip": 0}
+    assert get_feedback_counts(uid) == {"like": 2, "save": 0, "skip": 0}
+    assert get_interacted_paper_count(uid) == 1
 
     candidates = [
         _candidate("served-final", 0, 1.0),
