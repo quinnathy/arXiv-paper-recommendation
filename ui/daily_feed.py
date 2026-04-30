@@ -222,7 +222,7 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
             color_by=color_by,
         )
         fig.update_layout(title=f"{artifact_name} Paper Embedding Space")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         if show_centroids and centroid_coords is None:
             st.caption("User centroids could not be placed on the current sampled map.")
         if viz_meta.get("explained_variance_ratio"):
@@ -242,7 +242,8 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     user_id = st.session_state["user_id"]
     user = get_user(user_id)
 
-    render_query_search(index)
+    if render_query_search(index):
+        return
 
     hour = datetime.now().hour
     if hour < 5:

@@ -36,6 +36,7 @@ def _clear_query_search_state() -> None:
     ):
         st.session_state.pop(key, None)
 
+
 st.set_page_config(
     page_title="ArXiv Daily",
     page_icon="📄",
@@ -88,24 +89,23 @@ else:
         st.image("https://www.gravatar.com/avatar/0000?d=mp&f=y", width=60)
         st.markdown(f"**{user_data['display_name']}**")
 
-        if st.button("User Profile", use_container_width=True):
+        if st.button("User Profile", width="stretch"):
             st.session_state["overlay_page"] = "profile"
 
         st.divider()
 
-        if st.button("Explore Mode", use_container_width=True):
+        if st.button("Explore Mode", width="stretch"):
             st.session_state["active_tab_value"] = "Daily Feed"
             st.session_state.pop("active_tab_widget", None)
             st.session_state.pop("overlay_page", None)
             _clear_query_search_state()
 
-        if st.button("Archive", use_container_width=True):
+        if st.button("Archive", width="stretch"):
             st.session_state["overlay_page"] = "archive"
 
-        # Spacer replacement
         st.markdown("<br>" * 5, unsafe_allow_html=True)
-        
-        if st.button("Log out", use_container_width=True):
+
+        if st.button("Log out", width="stretch"):
             logout_user()
             st.rerun()
 
@@ -133,19 +133,19 @@ else:
 
     # 3. --- ROUTING ---
     overlay = st.session_state.get("overlay_page")
-    
+
     if overlay == "profile":
         if st.button("← Back to Feed"):
             st.session_state.pop("overlay_page", None)
             st.rerun()
         render_profile_page(index)
-    
+
     elif overlay == "archive":
         if st.button("← Back to Feed"):
             st.session_state.pop("overlay_page", None)
             st.rerun()
         render_archive_page()
-        
+
     else:
         # Standard Mode Routing
         if active_tab == "Research Lab":

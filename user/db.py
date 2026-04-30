@@ -446,3 +446,18 @@ def get_all_notes(user_id: str):
     ).fetchall()
     conn.close()
     return rows
+
+def delete_saved_paper(user_id: str, arxiv_id: str):
+    """
+    Removes a 'save' feedback signal for a specific paper.
+    This effectively 'unsaves' the paper from the user's archive and folders.
+    """
+    conn = _connect()
+    # We only delete the 'save' signal. 
+    # If the user also 'liked' it, that remains in their profile history.
+    conn.execute(
+        "DELETE FROM feedback WHERE user_id = ? AND arxiv_id = ? AND signal = 'save'",
+        (user_id, arxiv_id)
+    )
+    conn.commit()
+    conn.close()

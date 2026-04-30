@@ -6,6 +6,7 @@ import numpy as np
 
 from recommender.query_search import (
     expand_query,
+    lexical_score,
     search_papers,
     select_query_clusters,
     select_user_clusters,
@@ -115,7 +116,26 @@ def test_search_filters_seen_ids_and_caps_same_cluster_results():
     assert cluster_zero_count <= 3
 
 
-def test_search_uses_query_user_recency_without_lexical_bonus():
+def test_lexical_score_prefers_title_and_phrase_matches():
+    title_match = {
+        "title": "LoRA adapters for efficient fine tuning",
+        "abstract": "",
+    }
+    abstract_match = {
+        "title": "Efficient fine tuning",
+        "abstract": "We study LoRA adapters for language models.",
+    }
+    no_match = {
+        "title": "Efficient fine tuning",
+        "abstract": "We study adapters for language models.",
+    }
+
+    assert lexical_score("LoRA", title_match) == 1.0
+    assert lexical_score("LoRA", abstract_match) == 0.5
+    assert lexical_score("LoRA", no_match) == 0.0
+
+
+def test_search_includes_lexical_score_without_overpowering_query_similarity():
     index = _fake_index(
         embeddings=[
             [1.0, 0.0],
@@ -139,5 +159,10 @@ def test_search_uses_query_user_recency_without_lexical_bonus():
     )
 
     assert results[0]["id"] == "p0"
-    assert "lexical_score" not in results[0]
-    assert {"query_similarity", "user_similarity", "recency_score"} <= set(results[0])
+    assert results[1]["lexical_score"] == 1.0
+    assert {
+        "query_similarity",
+        "user_similarity",
+        "recency_score",
+        "lexical_score",
+    } <= set(results[0])
