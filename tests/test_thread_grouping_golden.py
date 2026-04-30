@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 from pipeline.concept_tags import (
-    BROAD_CONCEPT_KEYS,
     CONCEPT_TAG_MAP,
     load_concept_embedding_artifacts,
 )
@@ -129,7 +128,7 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
         (2, 2),
     ),
     GoldenCase(
-        "broad_ai_ml_specific_bio",
+        "category_context_ai_ml_specific_bio",
         ("artificial_intelligence", "machine_learning"),
         ("single-cell perturbation modeling",),
         (1, 1),
@@ -324,7 +323,6 @@ def build_golden_seeds(
                 key,
                 concept.label,
                 concept_embeddings[key],
-                broad=key in BROAD_CONCEPT_KEYS,
             )
         )
     if case.free_texts:

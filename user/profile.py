@@ -30,8 +30,8 @@ EMA_ALPHA: float = 0.15
 # Agglomerative grouping defaults
 # ---------------------------------------------------------------------------
 
-MERGE_THRESHOLD: float = 0.05
-MAX_THREADS: int = 3
+MERGE_THRESHOLD: float = 0.02
+MAX_THREADS: int = 5
 CORE_SPLIT_POWER: float = 0.6
 
 
@@ -106,20 +106,8 @@ def make_category_seed(code: str, label: str, embedding: np.ndarray) -> SeedSign
     )
 
 
-def make_concept_seed(
-    key: str, label: str, embedding: np.ndarray, broad: bool = False,
-) -> SeedSignal:
+def make_concept_seed(key: str, label: str, embedding: np.ndarray) -> SeedSignal:
     """Create a seed from a predefined concept tag."""
-    if broad:
-        return SeedSignal(
-            vector=embedding,
-            weight=1.0,
-            reliability=0.9,
-            specificity=0.5,
-            split_power=0.3,
-            label=label,
-            source="predefined_tag",
-        )
     return SeedSignal(
         vector=embedding,
         weight=1.5,

@@ -384,13 +384,13 @@ The `split_power` controls whether a seed is allowed to create a new research th
 
 This distinction is important.
 
-A broad tag such as:
+A context-only category seed such as:
 
 ```text
 Machine Learning
 ```
 
-should contribute to the final centroid, but it should not easily become its own separate thread.
+can contribute to the final centroid while using lower split power than a specific concept or free-text seed.
 
 A specific free-text interest such as:
 
@@ -404,13 +404,7 @@ Example source settings:
 
 ```python
 SEED_SOURCE_CONFIG = {
-    "predefined_tag_broad": {
-        "weight": 1.0,
-        "reliability": 0.9,
-        "specificity": 0.5,
-        "split_power": 0.3,
-    },
-    "predefined_tag_specific": {
+    "predefined_tag": {
         "weight": 1.5,
         "reliability": 0.9,
         "specificity": 0.7,
@@ -664,15 +658,8 @@ These usually have high `split_power`.
 
 Support seeds help shape the final centroid, but should not easily create their own thread.
 
-Examples:
-
-```text
-broad tags such as Machine Learning, AI, Statistics, Mathematics
-```
-
+Examples include arXiv category seeds and any other context-only seeds.
 These usually have low `split_power`.
-
-This is important because a broad tag like “Machine Learning” should usually attach to a more specific thread such as “diffusion models for medical imaging,” rather than becoming a separate user interest by itself.
 
 ---
 
@@ -725,7 +712,7 @@ def initialize_user_centroids_threshold(
     This is the recommended replacement for small-seed k-means initialization.
 
     The algorithm:
-        1. separates thread-forming core seeds from broad support seeds;
+        1. separates thread-forming core seeds from support seeds;
         2. infers thread groups using agglomerative threshold grouping;
         3. assigns all seeds to the inferred threads;
         4. computes final weighted centroids.
@@ -814,42 +801,20 @@ def initialize_user_centroids_threshold(
 ## 5.1 From Predefined Concept Tags
 
 ```python
-def seed_from_concept_tag(concept: ConceptTag, broad: bool = False) -> SeedSignal:
+def seed_from_concept_tag(concept: ConceptTag) -> SeedSignal:
     if concept.embedding is None:
         raise ValueError(f"Concept {concept.key} has no precomputed embedding.")
-
-    if broad:
-        specificity = 0.5
-        split_power = 0.3
-        weight = 1.0
-    else:
-        specificity = 0.7
-        split_power = 0.7
-        weight = 1.5
 
     return SeedSignal(
         text=concept.description,
         vector=concept.embedding,
         source="predefined_tag",
-        weight=weight,
+        weight=1.5,
         reliability=0.9,
-        specificity=specificity,
-        split_power=split_power,
+        specificity=0.7,
+        split_power=0.7,
         label=concept.label,
     )
-```
-
-The `broad` flag can be set manually in the concept registry.
-
-For example:
-
-```python
-BROAD_CONCEPT_KEYS = {
-    "machine_learning",
-    "artificial_intelligence",
-    "statistics",
-    "mathematics",
-}
 ```
 
 ---
@@ -886,17 +851,9 @@ def build_onboarding_seeds(
 ) -> list[SeedSignal]:
     seeds: list[SeedSignal] = []
 
-    BROAD_CONCEPT_KEYS = {
-        "machine_learning",
-        "artificial_intelligence",
-        "statistics",
-        "mathematics",
-    }
-
     for key in selected_concept_keys:
         concept = concept_registry[key]
-        broad = key in BROAD_CONCEPT_KEYS
-        seeds.append(seed_from_concept_tag(concept, broad=broad))
+        seeds.append(seed_from_concept_tag(concept))
 
     for text in free_text_interests:
         if text.strip():
@@ -930,7 +887,6 @@ For `n_seeds = 2`, agglomerative grouping naturally does the right thing:
 
 - If the two seeds are close, they merge.
 - If they are far, they remain separate.
-- If one is broad support and the other is specific core, the broad seed attaches to the specific thread.
 
 This is preferable to k-means, which would create two clusters whenever `k=2` regardless of whether the two seeds are truly distinct.
 
@@ -979,7 +935,7 @@ One or two threads depending on actual embedding distance:
 Likely Thread 1:
     Healthcare AI
     diffusion models for medical imaging
-    Machine Learning as support
+    Machine Learning
 ```
 
 Potentially:
@@ -993,7 +949,7 @@ Thread 2:
     Machine Learning
 ```
 
-But the second case should only happen if the ML vector is genuinely far and has enough split power. In the recommended design, broad Machine Learning has low split power, so it will usually support the specific healthcare thread rather than creating its own thread.
+The second case should happen only if the ML vector is genuinely far enough from the healthcare/free-text signals under the merge threshold.
 
 ---
 
@@ -1131,7 +1087,7 @@ TEST_CASES = [
         ],
     },
     {
-        "name": "broad_plus_specific_bio",
+        "name": "category_context_plus_specific_bio",
         "concepts": ["artificial_intelligence", "machine_learning"],
         "free_text": ["single-cell perturbation modeling"],
     },
@@ -1271,4 +1227,3 @@ This replaces k-means as the default cold-start initializer.
 - [ ] Add debug view for pairwise seed distances and thread assignments.
 - [ ] Tune `merge_threshold` using real concept embeddings.
 - [ ] Compare against old k-means initialization on synthetic onboarding cases.
-

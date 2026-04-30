@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import streamlit as st
 
-from pipeline.concept_tags import BROAD_CONCEPT_KEYS, CONCEPT_TAG_MAP
+from pipeline.concept_tags import CONCEPT_TAG_MAP
 from pipeline.embed import EmbeddingModel
 from pipeline.index import PaperIndex
 from pipeline.interest_expander import embed_free_text_interests
@@ -222,13 +222,11 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         # Concept tags
         for key in selected_concepts:
             tag = CONCEPT_TAG_MAP[key]
-            broad = key in BROAD_CONCEPT_KEYS
             seeds.append(
                 make_concept_seed(
                     key,
                     tag.label,
                     concept_embeddings[key],
-                    broad=broad,
                 )
             )
 
