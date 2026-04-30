@@ -76,22 +76,22 @@ else:
         st.image("https://www.gravatar.com/avatar/0000?d=mp&f=y", width=60)
         st.markdown(f"**{user_data['display_name']}**")
 
-        if st.button("User Profile", use_container_width=True):
+        if st.button("User Profile", width="stretch"):
             st.session_state["overlay_page"] = "profile"
 
         st.divider()
 
-        if st.button("Explore Mode", use_container_width=True):
+        if st.button("Explore Mode", width="stretch"):
             st.session_state["active_tab_value"] = "Daily Feed"
             st.session_state.pop("overlay_page", None)
 
-        if st.button("Archive", use_container_width=True):
+        if st.button("Archive", width="stretch"):
             st.session_state["overlay_page"] = "archive"
 
         # Spacer replacement
         st.markdown("<br>" * 5, unsafe_allow_html=True)
         
-        if st.button("Log out", use_container_width=True):
+        if st.button("Log out", width="stretch"):
             logout_user()
             st.rerun()
 
@@ -100,8 +100,11 @@ else:
     if "active_tab_value" not in st.session_state:
         st.session_state["active_tab_value"] = st.session_state.pop("active_tab", "Daily Feed")
 
+    forced_tab = None
     if "requested_tab" in st.session_state:
-        st.session_state["active_tab_value"] = st.session_state.pop("requested_tab")
+        requested_tab = st.session_state.pop("requested_tab")
+        st.session_state["active_tab_value"] = requested_tab
+        forced_tab = requested_tab
 
     # Mode pills
     active_tab = st.pills(
@@ -111,6 +114,8 @@ else:
         key="active_tab_widget",
         label_visibility="collapsed",
     )
+    if forced_tab is not None:
+        active_tab = forced_tab
     st.session_state["active_tab_value"] = active_tab
 
     # Right Sidebar (Folders/Files)
