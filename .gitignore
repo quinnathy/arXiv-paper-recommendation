@@ -6,6 +6,10 @@ data/*
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+.pytest-tmp/
+tmp_pytest_run/
+pytest-cache-files-*/
 
 # Environment
 .env

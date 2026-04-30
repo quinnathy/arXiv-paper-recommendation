@@ -78,6 +78,22 @@ def _add_to_workspace(arxiv_id: str, stay_on_tab: str | None = None):
         st.session_state["requested_tab"] = stay_on_tab
 
 
+def _add_all_to_workspace(saved_papers: list[dict], stay_on_tab: str | None = None):
+    workspace_ids = st.session_state["learning_workspace"]
+    existing_ids = set(workspace_ids)
+    new_ids = [
+        paper["arxiv_id"]
+        for paper in saved_papers
+        if paper["arxiv_id"] not in existing_ids
+    ]
+
+    if new_ids:
+        st.session_state["learning_workspace"] = new_ids + workspace_ids
+
+    if stay_on_tab:
+        st.session_state["requested_tab"] = stay_on_tab
+
+
 def _remove_from_workspace(arxiv_id: str):
     st.session_state["learning_workspace"] = [
         pid for pid in st.session_state["learning_workspace"] if pid != arxiv_id
@@ -89,7 +105,41 @@ def _remove_all_from_workspace():
     _clear_workspace_outputs()
 
 
-def _open_in_research_mode(arxiv_id: str):
+def _save_paper_to_folders(arxiv_id: str, index: PaperIndex) -> bool:
+    user_id = st.session_state["user_id"]
+    saved_ids = {paper["arxiv_id"] for paper in get_saved_papers(user_id)}
+    if arxiv_id in saved_ids:
+        return False
+
+    centroids = st.session_state["user_centroids"]
+    suggestions = st.session_state.get("workspace_similar_papers", [])
+    meta = next((paper for paper in suggestions if paper.get("id") == arxiv_id), None)
+    cluster_id = meta.get("cluster_id", 0) if meta else 0
+    score = meta.get("rec_score", 0.0) if meta else 0.0
+
+    log_feedback(user_id, arxiv_id, "save", cluster_id, score)
+
+    paper_idx = _paper_index_by_id(index, arxiv_id)
+    if paper_idx is not None:
+        paper_emb = index.embeddings[paper_idx]
+        new_centroids = apply_feedback(centroids, paper_emb, "save")
+        update_centroids(user_id, new_centroids)
+        save_centroids_to_session(new_centroids)
+
+    if "responded" not in st.session_state:
+        st.session_state["responded"] = set()
+    st.session_state["responded"].add(arxiv_id)
+    return True
+
+
+def _open_in_research_mode(
+    arxiv_id: str,
+    index: PaperIndex | None = None,
+    save_to_folders: bool = False,
+):
+    if save_to_folders and index is not None:
+        _save_paper_to_folders(arxiv_id, index)
+
     st.session_state["active_arxiv_id"] = arxiv_id
     st.session_state["requested_tab"] = "Research Lab"
     st.session_state["active_tab_value"] = "Research Lab"
@@ -142,37 +192,17 @@ def _find_workspace_similar_papers(index: PaperIndex, workspace_papers: list[dic
 
 
 def _handle_workspace_suggestion_add(arxiv_id: str, index: PaperIndex) -> None:
-    user_id = st.session_state["user_id"]
-    centroids = st.session_state["user_centroids"]
-    suggestions = st.session_state.get("workspace_similar_papers", [])
-    meta = next((paper for paper in suggestions if paper.get("id") == arxiv_id), None)
-    cluster_id = meta.get("cluster_id", 0) if meta else 0
-    score = meta.get("rec_score", 0.0) if meta else 0.0
-
-    log_feedback(user_id, arxiv_id, "save", cluster_id, score)
-
-    paper_idx = _paper_index_by_id(index, arxiv_id)
-    if paper_idx is not None:
-        paper_emb = index.embeddings[paper_idx]
-        new_centroids = apply_feedback(centroids, paper_emb, "save")
-        update_centroids(user_id, new_centroids)
-        save_centroids_to_session(new_centroids)
-
-    if "responded" not in st.session_state:
-        st.session_state["responded"] = set()
-    st.session_state["responded"].add(arxiv_id)
-    if arxiv_id not in st.session_state["learning_workspace"]:
-        st.session_state["learning_workspace"].insert(0, arxiv_id)
+    _save_paper_to_folders(arxiv_id, index)
     st.rerun()
 
 
-def _render_workspace_suggestion(paper: dict, index: PaperIndex) -> None:
+def _render_workspace_suggestion(
+    paper: dict,
+    index: PaperIndex,
+    saved_ids: set[str],
+) -> None:
     arxiv_id = paper["id"]
-    responded = st.session_state.get("responded", set())
-    is_added = (
-        arxiv_id in responded
-        or arxiv_id in st.session_state.get("learning_workspace", [])
-    )
+    is_saved = arxiv_id in saved_ids
 
     with st.container(border=True):
         title = " ".join(paper.get("title", arxiv_id).split())
@@ -193,10 +223,10 @@ def _render_workspace_suggestion(paper: dict, index: PaperIndex) -> None:
         cols = st.columns(3)
         with cols[0]:
             if st.button(
-                "Added" if is_added else "Add",
+                "Saved" if is_saved else "Add",
                 key=f"workspace_similar_add_{arxiv_id}",
                 width="stretch",
-                disabled=is_added,
+                disabled=is_saved,
             ):
                 _handle_workspace_suggestion_add(arxiv_id, index)
         with cols[1]:
@@ -205,7 +235,7 @@ def _render_workspace_suggestion(paper: dict, index: PaperIndex) -> None:
                 key=f"workspace_similar_research_{arxiv_id}",
                 width="stretch",
             ):
-                _open_in_research_mode(arxiv_id)
+                _open_in_research_mode(arxiv_id, index, save_to_folders=True)
         with cols[2]:
             st.link_button(
                 "PDF",
@@ -315,6 +345,10 @@ def _render_map_summary(graph: dict) -> None:
     with cols[2]:
         st.metric("Concepts", counts.get("concepts", 0))
 
+    theme_labels = summary.get("theme_labels", [])
+    if theme_labels:
+        st.caption("Themes: " + ", ".join(theme_labels))
+
     closest = summary.get("closest_pair")
     if closest:
         st.caption(
@@ -325,15 +359,16 @@ def _render_map_summary(graph: dict) -> None:
     isolated = summary.get("most_isolated")
     if isolated:
         st.caption(f"Most isolated paper: {isolated}")
-    theme_labels = summary.get("theme_labels", [])
-    if theme_labels:
-        st.caption("Theme anchors: " + ", ".join(theme_labels))
     position_source = summary.get("position_source")
     if position_source:
         st.caption(f"Paper positions: {position_source}.")
 
 
-def _render_workspace_result_panel(index: PaperIndex, workspace_papers: list[dict]) -> None:
+def _render_workspace_result_panel(
+    index: PaperIndex,
+    workspace_papers: list[dict],
+    saved_ids: set[str],
+) -> None:
     active_view = st.session_state.get("workspace_result_view")
     if not active_view:
         return
@@ -352,7 +387,7 @@ def _render_workspace_result_panel(index: PaperIndex, workspace_papers: list[dic
         if similar_papers:
             st.subheader("Similar Papers")
             for paper in similar_papers:
-                _render_workspace_suggestion(paper, index)
+                _render_workspace_suggestion(paper, index, saved_ids)
         elif st.session_state.get("workspace_similar_requested"):
             st.info("No new similar papers were found for this workspace.")
         return
@@ -523,7 +558,7 @@ def _render_workspace(index: PaperIndex, paper_lookup):
             st.session_state["workspace_result_view"] = "summary"
         st.rerun()
 
-    _render_workspace_result_panel(index, workspace_papers)
+    _render_workspace_result_panel(index, workspace_papers, set(paper_lookup))
 
 
 def _toggle_right_sidebar():
@@ -646,6 +681,11 @@ def _render_saved_paper_row(paper, active_tab: str, row_index: int):
     title = paper.get("title", arxiv_id)
     user_id = st.session_state["user_id"]
     row_key = f"{row_index}_{arxiv_id}"
+    is_active_research_paper = (
+        active_tab == "Research Lab"
+        and st.session_state.get("active_arxiv_id") == arxiv_id
+        and st.session_state.get("overlay_page") is None
+    )
 
     st.markdown(f"**{title[:80]}**")
 
@@ -667,7 +707,17 @@ def _render_saved_paper_row(paper, active_tab: str, row_index: int):
             st.rerun()
 
     with cols[1]:
-        if st.button("Read", key=f"sidebar_read_{row_key}", width="stretch"):
+        if st.button(
+            "Read",
+            key=f"sidebar_read_{row_key}",
+            width="stretch",
+            disabled=is_active_research_paper,
+            help=(
+                "This paper is open in Research Lab."
+                if is_active_research_paper
+                else "Open this paper in Research Lab."
+            ),
+        ):
             _open_in_research_mode(arxiv_id)
 
     with cols[2]:
@@ -704,6 +754,21 @@ def _render_right_sidebar(saved_papers, active_tab: str):
             if not saved_papers:
                 st.caption("No saved papers yet.")
             else:
+                workspace_ids = set(st.session_state.get("learning_workspace", []))
+                all_added = all(
+                    paper["arxiv_id"] in workspace_ids for paper in saved_papers
+                )
+                if active_tab != "Daily Feed":
+                    if st.button(
+                        "Add All",
+                        key="sidebar_add_all_to_workspace",
+                        width="stretch",
+                        disabled=all_added,
+                    ):
+                        _add_all_to_workspace(saved_papers, stay_on_tab=active_tab)
+                        st.rerun()
+                    st.divider()
+
                 for row_index, paper in enumerate(saved_papers):
                     _render_saved_paper_row(paper, active_tab, row_index)
                     st.divider()

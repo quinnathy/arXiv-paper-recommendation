@@ -450,7 +450,7 @@ def get_all_notes(user_id: str):
 def delete_saved_paper(user_id: str, arxiv_id: str):
     """
     Removes a 'save' feedback signal for a specific paper.
-    This effectively 'unsaves' the paper from the user's archive and folders.
+    This effectively 'unsaves' the paper from the user's saved papers and folders.
     """
     conn = _connect()
     # We only delete the 'save' signal. 
