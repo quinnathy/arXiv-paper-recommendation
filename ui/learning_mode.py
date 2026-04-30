@@ -234,18 +234,18 @@ def _inject_right_sidebar_styles():
 def _render_saved_paper_row(paper, active_tab: str):
     arxiv_id = paper["arxiv_id"]
     title = paper.get("title", arxiv_id)
+    user_id = st.session_state["user_id"]
 
     st.markdown(f"**{title[:80]}**")
 
-    if active_tab not in {"Workspace", "Research Lab"}:
-        return
-
-    is_added = arxiv_id in st.session_state["learning_workspace"]
-    cols = st.columns(2)
+    # Layout for actions
+    cols = st.columns([0.33, 0.33, 0.34])
+    
     with cols[0]:
+        is_added = arxiv_id in st.session_state.get("learning_workspace", [])
         if st.button(
             "Added" if is_added else "Add",
-            key=f"right_folder_workspace_{arxiv_id}",
+            key=f"sidebar_add_{arxiv_id}",
             use_container_width=True,
             disabled=is_added,
         ):
@@ -253,12 +253,23 @@ def _render_saved_paper_row(paper, active_tab: str):
             st.rerun()
 
     with cols[1]:
-        if st.button(
-            "Read",
-            key=f"right_folder_research_{arxiv_id}",
-            use_container_width=True,
-        ):
-            _open_in_research_mode(arxiv_id)
+        if st.button("Read", key=f"sidebar_read_{arxiv_id}", use_container_width=True):
+            st.session_state["active_arxiv_id"] = arxiv_id
+            st.session_state["requested_tab"] = "Research Lab"
+            st.rerun()
+
+    with cols[2]:
+        # The new Delete button
+        if st.button("🗑️", key=f"sidebar_delete_{arxiv_id}", use_container_width=True, help="Remove from saved papers"):
+            from user.db import delete_saved_paper
+            delete_saved_paper(user_id, arxiv_id)
+            
+            # Clean up workspace if it was there
+            if arxiv_id in st.session_state.get("learning_workspace", []):
+                st.session_state["learning_workspace"].remove(arxiv_id)
+                
+            st.toast(f"Removed {arxiv_id}")
+            st.rerun()
 
 
 def _render_right_sidebar(saved_papers, active_tab: str):
@@ -299,13 +310,22 @@ def render_learning_mode(index):
 
     _render_workspace(paper_lookup)
 
-
 def render_workspace_sidebar(index, active_tab: str):
     _init_workspace_state()
     _inject_right_sidebar_styles()
 
     user_id = st.session_state["user_id"]
     saved = get_saved_papers(user_id)
-    saved_papers = _enrich_saved_papers(saved, index)
+    
+    # FIX: Deduplicate papers by arxiv_id before processing
+    seen_ids = set()
+    unique_saved = []
+    for item in saved:
+        if item["arxiv_id"] not in seen_ids:
+            unique_saved.append(item)
+            seen_ids.add(item["arxiv_id"])
+    
+    # Use the unique list for enrichment
+    saved_papers = _enrich_saved_papers(unique_saved, index)
 
     _render_right_sidebar(saved_papers, active_tab)
