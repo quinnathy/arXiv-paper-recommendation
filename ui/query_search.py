@@ -75,7 +75,8 @@ def _handle_search_feedback(arxiv_id: str, signal: str, index: PaperIndex) -> No
     st.rerun()
 
 
-def render_query_search(index: PaperIndex) -> None:
+def render_query_search(index: PaperIndex) -> bool:
+    """Render query search and return True when search results own the page."""
     user_id = st.session_state["user_id"]
 
     st.markdown("**Search papers by topic, method, dataset, or research question...**")
@@ -121,9 +122,18 @@ def render_query_search(index: PaperIndex) -> None:
 
     results = st.session_state.get("query_search_results", [])
     if not results:
-        return
+        return False
 
     st.subheader(f"Search results for \"{st.session_state.get('query_search_query', '')}\"")
+    if st.button("Back to personalized feed", key="query_search_clear"):
+        for key in (
+            "query_search_query",
+            "query_search_expanded_query",
+            "query_search_results",
+        ):
+            st.session_state.pop(key, None)
+        st.rerun()
+
     for meta in results:
         paper_card(
             meta,
@@ -135,3 +145,5 @@ def render_query_search(index: PaperIndex) -> None:
             st.session_state["active_arxiv_id"] = meta["id"]
             st.session_state["requested_tab"] = "Research Lab"
             st.rerun()
+
+    return True
