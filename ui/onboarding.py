@@ -17,6 +17,7 @@ from ui.components import (
     TOPIC_LABELS,
     expand_topic_labels,
     free_text_input,
+    loading_spinner_with_message,
     unified_tag_selector,
 )
 from user.db import create_user
@@ -31,7 +32,7 @@ from user.profile import (
 )
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
 
@@ -234,7 +235,7 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
 
         # Free-text interests
         if free_texts:
-            with st.spinner("Embedding your interests..."):
+            with loading_spinner_with_message():
                 model = _get_embed_model()
                 for phrase, emb in embed_free_text_interests(free_texts, model):
                     seeds.append(make_freetext_seed(phrase, emb))
@@ -242,10 +243,10 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         # Scholar papers
         papers = None
         if scholar_url.strip():
-            with st.spinner("Fetching your Scholar profile..."):
+            with loading_spinner_with_message():
                 papers = load_scholar_papers(scholar_url.strip())
             if papers:
-                with st.spinner("Embedding your papers..."):
+                with loading_spinner_with_message():
                     model = _get_embed_model()
                     paper_embeddings = model.embed_papers(papers)
                     for i, paper in enumerate(papers):

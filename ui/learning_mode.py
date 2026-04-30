@@ -12,6 +12,7 @@ from recommender.engine import recommend
 from user.db import get_saved_papers, get_seen_ids, log_feedback, update_centroids
 from user.profile import apply_feedback
 from user.session import save_centroids_to_session
+from ui.components import loading_spinner_with_message
 
 
 WORKSPACE_SIMILAR_LIMIT = 5
@@ -263,7 +264,7 @@ def _load_workspace_summary(workspace_papers: list[dict]) -> None:
     st.session_state.pop("workspace_summary", None)
     st.session_state.pop("workspace_summary_signature", None)
     try:
-        with st.spinner("Reading PDFs and summarizing workspace papers..."):
+        with loading_spinner_with_message():
             st.session_state["workspace_summary"] = summarize_workspace(
                 workspace_papers,
                 api_key=api_key,
@@ -290,7 +291,7 @@ def _load_workspace_similar_papers(
 
     st.session_state.pop("workspace_similar_papers", None)
     st.session_state.pop("workspace_similar_signature", None)
-    with st.spinner("Finding similar papers from workspace embeddings..."):
+    with loading_spinner_with_message():
         st.session_state["workspace_similar_papers"] = (
             _find_workspace_similar_papers(index, workspace_papers)
         )
@@ -321,7 +322,7 @@ def _load_workspace_concept_map(
     st.session_state.pop("workspace_concept_map", None)
     st.session_state.pop("workspace_concept_map_signature", None)
     st.session_state.pop("workspace_concept_map_params", None)
-    with st.spinner("Building workspace concept map..."):
+    with loading_spinner_with_message():
         st.session_state["workspace_concept_map"] = build_workspace_concept_map(
             index,
             workspace_ids,
@@ -520,7 +521,7 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                 st.session_state["workspace_result_view"] = "similar"
         with action_cols[1]:
             if st.button(
-                "Summarizing..." if summary_running else "Summarize",
+                "Summarize",
                 key="workspace_summarize",
                 width="stretch",
                 disabled=not workspace_papers or summary_running,
