@@ -129,6 +129,10 @@ else:
             st.session_state["overlay_page"] = "profile"
             st.rerun()
 
+        if st.button("Log out", width="stretch"):
+            logout_user()
+            st.rerun()
+
         st.divider()
 
         for tab in MAIN_TABS:
@@ -140,13 +144,6 @@ else:
             ):
                 _activate_main_tab(tab)
                 st.rerun()
-
-        st.markdown("<br>" * 5, unsafe_allow_html=True)
-
-        if st.button("Log out", width="stretch"):
-            logout_user()
-            st.rerun()
-
     # 2. --- MAIN CONTENT AREA ---
     # Right Sidebar (Folders/Files)
     render_workspace_sidebar(index, active_tab)
