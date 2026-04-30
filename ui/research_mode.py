@@ -68,10 +68,16 @@ def render_research_mode(index=None):
                 st.toast("Snippet Snagged!")
                 st.rerun()
         else:
-            # Note: local file path with iframe is tricky in Streamlit, 
-            # so we keep using the ArXiv URL for the scrollable preview.
-            pdf_url = f"https://arxiv.org/pdf/{active_id}.pdf#page={page_num+1}"
-            st.components.v1.iframe(pdf_url, height=800)
+            # Read the local PDF file we just downloaded
+            with open(pdf_path, "rb") as f:
+                base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+            
+            # Create an HTML embedding string
+            # We include the '#page=' parameter to maintain your page navigation
+            pdf_display = f'<embed src="data:application/pdf;base64,{base64_pdf}#page={page_num+1}" width="100%" height="800" type="application/pdf">'
+            
+            # Render it using markdown
+            st.markdown(pdf_display, unsafe_allow_html=True)
 
     # --- STEP 3: NOTEPAD ---
     with col_notepad:
