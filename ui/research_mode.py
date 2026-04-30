@@ -81,12 +81,11 @@ def render_research_mode(index=None):
 
     # --- STEP 3: NOTEPAD ---
     with col_notepad:
-        st.subheader("📓 Infinite Wall")
-        # ... (rest of your notepad/wall display code remains the same)
+        st.subheader("Brainstorm")
         
         # Frantic Manual Entry
         with st.form("brainstorm_form", clear_on_submit=True):
-            note = st.text_area("Type a thought...", placeholder="Notes, questions, or raw text snippets...", height=100)
+            note = st.text_area("Add a thought...", placeholder="Notes, questions, or raw text snippets...", height=100)
             if st.form_submit_button("Append Note", use_container_width=True):
                 if note:
                     save_research_note(user_id, f"<p>{note}</p>", active_id)
@@ -103,5 +102,4 @@ def render_research_mode(index=None):
             for content, aid, ts in notes:
                 # We use markdown with unsafe_allow_html to render the base64 images we saved
                 st.markdown(content, unsafe_allow_html=True)
-                st.caption(f"📎 {ts[11:16]}") # Show just the time for the 'frantic' vibe
                 st.divider()
