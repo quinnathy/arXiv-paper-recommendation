@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from html import escape
 from pathlib import Path
 
 import numpy as np
@@ -422,6 +423,8 @@ def make_workspace_concept_map_figure(graph: dict):
             continue
         x_values: list[float | None] = []
         y_values: list[float | None] = []
+        hover_x_values: list[float] = []
+        hover_y_values: list[float] = []
         hover_text: list[str] = []
         for edge in edge_group:
             source = node_lookup.get(edge["source"])
@@ -431,13 +434,20 @@ def make_workspace_concept_map_figure(graph: dict):
             x_values.extend([source["x"], target["x"], None])
             y_values.extend([source["y"], target["y"], None])
             distance = 1.0 - float(edge["weight"])
-            hover_text.extend(
-                [
-                    f"similarity: {edge['weight']:.3f}<br>distance: {distance:.3f}",
-                    "",
-                    "",
-                ]
+            hover_label = (
+                f"<b>{escape(str(source.get('label', source['id'])))}</b> - "
+                f"<b>{escape(str(target.get('label', target['id'])))}</b><br>"
+                f"similarity: {edge['weight']:.3f}<br>"
+                f"distance: {distance:.3f}"
             )
+            for fraction in (0.4, 0.5, 0.6):
+                hover_x_values.append(
+                    source["x"] + (target["x"] - source["x"]) * fraction
+                )
+                hover_y_values.append(
+                    source["y"] + (target["y"] - source["y"]) * fraction
+                )
+                hover_text.append(hover_label)
         fig.add_trace(
             go.Scatter(
                 x=x_values,
@@ -451,8 +461,19 @@ def make_workspace_concept_map_figure(graph: dict):
                         "concept_anchor": "rgba(168, 85, 247, 0.34)",
                     }[edge_type],
                 ),
+                hoverinfo="skip",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=hover_x_values,
+                y=hover_y_values,
+                mode="markers",
+                name=f"{edge_type.replace('_', ' ')} similarity",
+                marker=dict(size=14, color="rgba(0, 0, 0, 0)"),
                 text=hover_text,
                 hovertemplate="%{text}<extra></extra>",
+                showlegend=False,
             )
         )
 

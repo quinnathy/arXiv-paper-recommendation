@@ -377,8 +377,6 @@ def _render_workspace_result_panel(index: PaperIndex, workspace_papers: list[dic
                     help="Only draw concept links above this embedding similarity.",
                     disabled=not bool(getattr(index, "concept_embeddings", None)),
                 )
-            st.caption("Click Visualization again to apply controls or workspace changes.")
-
         graph = st.session_state.get("workspace_concept_map")
         if not graph or not graph.get("nodes"):
             st.info("Add papers to the workspace to build a concept map.")
@@ -489,7 +487,7 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                 type="primary",
             ):
                 st.session_state["workspace_pending_action"] = "summary"
-                st.session_state["workspace_result_view"] = "summary"
+                st.session_state.pop("workspace_result_view", None)
                 st.rerun()
         with action_cols[2]:
             if st.button(
@@ -518,6 +516,7 @@ def _render_workspace(index: PaperIndex, paper_lookup):
         st.session_state.pop("workspace_pending_action", None)
         if st.session_state.get("workspace_summary"):
             st.session_state["workspace_result_view"] = "summary"
+        st.rerun()
 
     _render_workspace_result_panel(index, workspace_papers)
 
