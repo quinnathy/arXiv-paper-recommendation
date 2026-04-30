@@ -56,6 +56,8 @@ def _clear_workspace_outputs() -> None:
         "workspace_similar_requested",
         "workspace_concept_map",
         "workspace_concept_map_signature",
+        "workspace_concept_map_params",
+        "workspace_pending_action",
         "workspace_result_view",
     ):
         st.session_state.pop(key, None)
@@ -227,6 +229,8 @@ def _load_workspace_summary(workspace_papers: list[dict]) -> None:
         return
 
     api_key = _get_openai_api_key()
+    st.session_state.pop("workspace_summary", None)
+    st.session_state.pop("workspace_summary_signature", None)
     try:
         with st.spinner("Reading PDFs and summarizing workspace papers..."):
             st.session_state["workspace_summary"] = summarize_workspace(
@@ -253,6 +257,8 @@ def _load_workspace_similar_papers(
     ):
         return
 
+    st.session_state.pop("workspace_similar_papers", None)
+    st.session_state.pop("workspace_similar_signature", None)
     with st.spinner("Finding similar papers from workspace embeddings..."):
         st.session_state["workspace_similar_papers"] = (
             _find_workspace_similar_papers(index, workspace_papers)
@@ -277,6 +283,9 @@ def _load_workspace_concept_map(
     ):
         return
 
+    st.session_state.pop("workspace_concept_map", None)
+    st.session_state.pop("workspace_concept_map_signature", None)
+    st.session_state.pop("workspace_concept_map_params", None)
     with st.spinner("Building workspace concept map..."):
         st.session_state["workspace_concept_map"] = build_workspace_concept_map(
             index,
