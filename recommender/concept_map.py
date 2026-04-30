@@ -55,6 +55,7 @@ VIZ_ARTIFACTS = (
         "indices": Path("data/diagnostics/pca_cluster_viz_indices.npy"),
     },
 )
+CONCEPT_RETENTION_THRESHOLD = 0.5
 
 
 def _unit_rows(matrix: np.ndarray) -> np.ndarray:
@@ -370,6 +371,7 @@ def _build_concept_anchors(
     concept_top_k: int,
     concept_similarity_threshold: float,
     max_anchor_nodes: int,
+    retention_threshold: float = CONCEPT_RETENTION_THRESHOLD,
 ) -> tuple[list[dict], np.ndarray | None, list[str]]:
     if not concept_embeddings:
         return [], None, []
@@ -378,14 +380,20 @@ def _build_concept_anchors(
     matrix = _unit_rows(np.stack([concept_embeddings[key] for key in keys]).astype(np.float32))
     sims = paper_vectors @ matrix.T
     candidates: dict[str, dict] = {}
+    retention_counts = {
+        key: int(np.sum(sims[:, key_pos] >= retention_threshold))
+        for key_pos, key in enumerate(keys)
+    }
 
     for paper_pos in range(sims.shape[0]):
         top = np.argsort(sims[paper_pos])[::-1][:concept_top_k]
         for anchor_pos in top:
             score = float(sims[paper_pos, anchor_pos])
-            if score < concept_similarity_threshold:
+            if score < retention_threshold:
                 continue
             key = keys[int(anchor_pos)]
+            if retention_counts[key] < 2:
+                continue
             node_id = f"concept:{key}"
             current = candidates.get(node_id)
             if current is None or score > current["score"]:
@@ -397,12 +405,34 @@ def _build_concept_anchors(
                     "type": "concept",
                     "vector": matrix[int(anchor_pos)],
                     "score": score,
+                    "retention_count": retention_counts[key],
                     "matrix_pos": int(anchor_pos),
                 }
 
-    anchors = sorted(candidates.values(), key=lambda item: item["score"], reverse=True)[
-        :max_anchor_nodes
-    ]
+    for anchor_pos, key in enumerate(keys):
+        if retention_counts[key] < 2:
+            continue
+        node_id = f"concept:{key}"
+        if node_id in candidates:
+            continue
+        score = float(np.max(sims[:, anchor_pos]))
+        candidates[node_id] = {
+            "id": node_id,
+            "key": key,
+            "label": _concept_label(key),
+            "title": _concept_label(key),
+            "type": "concept",
+            "vector": matrix[int(anchor_pos)],
+            "score": score,
+            "retention_count": retention_counts[key],
+            "matrix_pos": int(anchor_pos),
+        }
+
+    anchors = sorted(
+        candidates.values(),
+        key=lambda item: item["score"],
+        reverse=True,
+    )[:max_anchor_nodes]
     return anchors, sims, keys
 
 
@@ -410,9 +440,9 @@ def build_workspace_concept_map(
     index: PaperIndex,
     workspace_ids: list[str],
     paper_top_k: int = 3,
-    paper_similarity_threshold: float = 0.35,
+    paper_similarity_threshold: float = 0.5,
     concept_top_k: int = 3,
-    concept_similarity_threshold: float = 0.35,
+    concept_similarity_threshold: float = 0.5,
     max_anchor_nodes: int = 12,
     theme_similarity_threshold: float = 0.55,
 ) -> dict:
@@ -519,6 +549,33 @@ def build_workspace_concept_map(
 
     strongest_anchor_by_theme: dict[int, tuple[float, str]] = {}
     if concept_sims is not None:
+        edge_keys: set[tuple[str, str]] = set()
+
+        def add_concept_edge(
+            paper_pos: int,
+            paper_node: dict,
+            anchor: dict,
+            score: float,
+            retained_by_floor: bool = False,
+        ) -> None:
+            edge_key = (paper_node["id"], anchor["id"])
+            if edge_key in edge_keys:
+                return
+            edge_keys.add(edge_key)
+            theme = int(paper_node.get("theme", 0))
+            current = strongest_anchor_by_theme.get(theme)
+            if current is None or score > current[0]:
+                strongest_anchor_by_theme[theme] = (score, anchor["label"])
+            edges.append(
+                {
+                    "source": paper_node["id"],
+                    "target": anchor["id"],
+                    "weight": score,
+                    "type": "concept_anchor",
+                    "retained_by_floor": retained_by_floor,
+                }
+            )
+
         for paper_pos, paper_node in enumerate(nodes):
             scored: list[tuple[float, dict]] = []
             for anchor in anchors:
@@ -529,18 +586,22 @@ def build_workspace_concept_map(
                     scored.append((score, anchor))
             scored.sort(key=lambda item: item[0], reverse=True)
             for score, anchor in scored[:concept_top_k]:
-                theme = int(paper_node.get("theme", 0))
-                current = strongest_anchor_by_theme.get(theme)
-                if current is None or score > current[0]:
-                    strongest_anchor_by_theme[theme] = (score, anchor["label"])
-                edges.append(
-                    {
-                        "source": paper_node["id"],
-                        "target": anchor["id"],
-                        "weight": score,
-                        "type": "concept_anchor",
-                    }
-                )
+                add_concept_edge(paper_pos, paper_node, anchor, score)
+
+        for paper_pos, paper_node in enumerate(nodes):
+            for anchor in anchors:
+                if anchor.get("retention_count", 0) < 2:
+                    continue
+                anchor_pos = concept_keys.index(anchor["key"])
+                score = float(concept_sims[paper_pos, anchor_pos])
+                if score >= CONCEPT_RETENTION_THRESHOLD:
+                    add_concept_edge(
+                        paper_pos,
+                        paper_node,
+                        anchor,
+                        score,
+                        retained_by_floor=score < concept_similarity_threshold,
+                    )
 
     single_concepts_by_paper: dict[str, list[str]] = {}
     kept_anchors: list[dict] = []
@@ -607,6 +668,7 @@ def build_workspace_concept_map(
             node["theme_label"] = theme_names.get(theme, f"Theme {theme + 1}")
         node.pop("vector", None)
         node.pop("matrix_pos", None)
+        node.pop("retention_count", None)
 
     by_pair: dict[tuple[str, str, str], dict] = {}
     for edge in edges:
@@ -717,11 +779,16 @@ def make_workspace_concept_map_figure(graph: dict):
                     )
                 hover_label = "<br>".join(hover_parts)
             else:
-                hover_label = (
-                    f"<b>{source_label}</b> - <b>{target_label}</b><br>"
-                    f"similarity: {edge['weight']:.3f}<br>"
-                    f"distance: {distance:.3f}"
-                )
+                hover_parts = [
+                    f"<b>{source_label}</b> - <b>{target_label}</b>",
+                    f"similarity: {edge['weight']:.3f}",
+                    f"distance: {distance:.3f}",
+                ]
+                if edge.get("retained_by_floor"):
+                    hover_parts.append(
+                        f"retained at concept floor: {CONCEPT_RETENTION_THRESHOLD:.1f}"
+                    )
+                hover_label = "<br>".join(hover_parts)
             for fraction in (0.4, 0.5, 0.6):
                 hover_x_values.append(
                     source["x"] + (target["x"] - source["x"]) * fraction

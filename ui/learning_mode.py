@@ -16,7 +16,8 @@ from ui.components import loading_spinner_with_message
 
 
 WORKSPACE_SIMILAR_LIMIT = 5
-WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION = "custom-distance-v1"
+WORKSPACE_MAP_DEFAULT_THRESHOLD = 0.5
+WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION = "custom-distance-v4"
 
 
 def _init_workspace_state():
@@ -302,8 +303,8 @@ def _load_workspace_similar_papers(
 def _load_workspace_concept_map(
     index: PaperIndex,
     workspace_papers: list[dict],
-    paper_similarity_threshold: float = 0.35,
-    concept_similarity_threshold: float = 0.35,
+    paper_similarity_threshold: float = WORKSPACE_MAP_DEFAULT_THRESHOLD,
+    concept_similarity_threshold: float = WORKSPACE_MAP_DEFAULT_THRESHOLD,
 ) -> None:
     workspace_ids = [paper["arxiv_id"] for paper in workspace_papers]
     signature = _workspace_signature(workspace_papers)
@@ -402,7 +403,10 @@ def _render_workspace_result_panel(
                     "Paper link threshold",
                     min_value=0.0,
                     max_value=1.0,
-                    value=st.session_state.get("workspace_map_paper_threshold", 0.35),
+                    value=st.session_state.get(
+                        "workspace_map_paper_threshold",
+                        WORKSPACE_MAP_DEFAULT_THRESHOLD,
+                    ),
                     step=0.05,
                     key="workspace_map_paper_threshold",
                     help="Only draw paper-paper links above this custom connection score.",
@@ -412,12 +416,27 @@ def _render_workspace_result_panel(
                     "Concept link threshold",
                     min_value=0.0,
                     max_value=1.0,
-                    value=st.session_state.get("workspace_map_concept_threshold", 0.35),
+                    value=st.session_state.get(
+                        "workspace_map_concept_threshold",
+                        WORKSPACE_MAP_DEFAULT_THRESHOLD,
+                    ),
                     step=0.05,
                     key="workspace_map_concept_threshold",
                     help="Only draw concept links above this embedding similarity.",
                     disabled=not bool(getattr(index, "concept_embeddings", None)),
                 )
+        _load_workspace_concept_map(
+            index,
+            workspace_papers,
+            paper_similarity_threshold=st.session_state.get(
+                "workspace_map_paper_threshold",
+                WORKSPACE_MAP_DEFAULT_THRESHOLD,
+            ),
+            concept_similarity_threshold=st.session_state.get(
+                "workspace_map_concept_threshold",
+                WORKSPACE_MAP_DEFAULT_THRESHOLD,
+            ),
+        )
         graph = st.session_state.get("workspace_concept_map")
         if not graph or not graph.get("nodes"):
             st.info("Add papers to the workspace to build a concept map.")
@@ -543,11 +562,11 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                     workspace_papers,
                     paper_similarity_threshold=st.session_state.get(
                         "workspace_map_paper_threshold",
-                        0.35,
+                        WORKSPACE_MAP_DEFAULT_THRESHOLD,
                     ),
                     concept_similarity_threshold=st.session_state.get(
                         "workspace_map_concept_threshold",
-                        0.35,
+                        WORKSPACE_MAP_DEFAULT_THRESHOLD,
                     ),
                 )
                 st.session_state["workspace_result_view"] = "visualization"
