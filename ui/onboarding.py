@@ -78,15 +78,15 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         st.subheader("Welcome")
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("Log in", use_container_width=True):
+            if st.button("Log in", width="stretch"):
                 st.session_state["auth_mode"] = "Log in"
                 st.rerun()
         with col2:
-            if st.button("Sign up", use_container_width=True):
+            if st.button("Sign up", width="stretch"):
                 st.session_state["auth_mode"] = "Create account"
                 st.rerun()
         with col3:
-            if st.button("Continue as guest", use_container_width=True):
+            if st.button("Continue as guest", width="stretch"):
                 st.session_state["auth_mode"] = "Continue as guest"
                 st.rerun()
         return

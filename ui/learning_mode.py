@@ -2,7 +2,19 @@
 
 import streamlit as st
 
-from user.db import get_saved_papers
+from ai.workspace_summary import summarize_workspace
+from pipeline.index import PaperIndex
+from recommender.concept_map import (
+    build_workspace_concept_map,
+    make_workspace_concept_map_figure,
+)
+from recommender.engine import recommend
+from user.db import get_saved_papers, get_seen_ids, log_feedback, update_centroids
+from user.profile import apply_feedback
+from user.session import save_centroids_to_session
+
+
+WORKSPACE_SIMILAR_LIMIT = 5
 
 
 def _init_workspace_state():
@@ -31,6 +43,32 @@ def _enrich_saved_papers(saved_items, index):
     return papers
 
 
+def _workspace_signature(workspace_papers: list[dict]) -> tuple[str, ...]:
+    return tuple(paper["arxiv_id"] for paper in workspace_papers)
+
+
+def _clear_workspace_outputs() -> None:
+    for key in (
+        "workspace_summary",
+        "workspace_summary_signature",
+        "workspace_similar_papers",
+        "workspace_similar_signature",
+        "workspace_similar_requested",
+        "workspace_concept_map",
+        "workspace_concept_map_signature",
+        "workspace_concept_map_params",
+        "workspace_pending_action",
+        "workspace_result_view",
+    ):
+        st.session_state.pop(key, None)
+
+
+def _sync_workspace_output_cache(workspace_papers: list[dict]) -> None:
+    st.session_state["workspace_cache_signature"] = _workspace_signature(
+        workspace_papers
+    )
+
+
 def _add_to_workspace(arxiv_id: str, stay_on_tab: str | None = None):
     if arxiv_id not in st.session_state["learning_workspace"]:
         st.session_state["learning_workspace"].insert(0, arxiv_id)
@@ -45,75 +83,442 @@ def _remove_from_workspace(arxiv_id: str):
     ]
 
 
+def _remove_all_from_workspace():
+    st.session_state["learning_workspace"] = []
+    _clear_workspace_outputs()
+
+
 def _open_in_research_mode(arxiv_id: str):
     st.session_state["active_arxiv_id"] = arxiv_id
     st.session_state["requested_tab"] = "Research Lab"
+    st.session_state["active_tab_value"] = "Research Lab"
+    st.session_state.pop("overlay_page", None)
     st.rerun()
 
 
 def _render_workspace_action(label: str, key: str):
-    if st.button(label, key=key, use_container_width=True):
+    if st.button(label, key=key, width="stretch"):
         st.info(f"{label.title()} will be connected to the workspace AI tools.")
 
 
-def _render_workspace(paper_lookup):
+def _paper_index_by_id(index: PaperIndex, arxiv_id: str) -> int | None:
+    for i, meta in enumerate(index.paper_meta):
+        if meta.get("id") == arxiv_id:
+            return i
+    return None
+
+
+def _workspace_query_vectors(index: PaperIndex, workspace_ids: list[str]):
+    paper_indices = [
+        idx
+        for arxiv_id in workspace_ids
+        if (idx := _paper_index_by_id(index, arxiv_id)) is not None
+    ]
+    if not paper_indices:
+        return None
+
+    embeddings = index.embeddings[paper_indices].astype("float32")
+    norms = (embeddings * embeddings).sum(axis=1, keepdims=True) ** 0.5
+    norms = norms.clip(min=1e-12)
+    return (embeddings / norms).astype("float32")
+
+
+def _find_workspace_similar_papers(index: PaperIndex, workspace_papers: list[dict]):
+    workspace_ids = [paper["arxiv_id"] for paper in workspace_papers]
+    query_vectors = _workspace_query_vectors(index, workspace_ids)
+    if query_vectors is None:
+        return []
+
+    user_id = st.session_state["user_id"]
+    excluded_ids = get_seen_ids(user_id) | set(workspace_ids)
+    return recommend(
+        query_vectors,
+        excluded_ids,
+        index,
+        diversity=st.session_state.get("user_diversity", 0.5),
+        n=WORKSPACE_SIMILAR_LIMIT,
+    )
+
+
+def _handle_workspace_suggestion_add(arxiv_id: str, index: PaperIndex) -> None:
+    user_id = st.session_state["user_id"]
+    centroids = st.session_state["user_centroids"]
+    suggestions = st.session_state.get("workspace_similar_papers", [])
+    meta = next((paper for paper in suggestions if paper.get("id") == arxiv_id), None)
+    cluster_id = meta.get("cluster_id", 0) if meta else 0
+    score = meta.get("rec_score", 0.0) if meta else 0.0
+
+    log_feedback(user_id, arxiv_id, "save", cluster_id, score)
+
+    paper_idx = _paper_index_by_id(index, arxiv_id)
+    if paper_idx is not None:
+        paper_emb = index.embeddings[paper_idx]
+        new_centroids = apply_feedback(centroids, paper_emb, "save")
+        update_centroids(user_id, new_centroids)
+        save_centroids_to_session(new_centroids)
+
+    if "responded" not in st.session_state:
+        st.session_state["responded"] = set()
+    st.session_state["responded"].add(arxiv_id)
+    if arxiv_id not in st.session_state["learning_workspace"]:
+        st.session_state["learning_workspace"].insert(0, arxiv_id)
+    st.rerun()
+
+
+def _render_workspace_suggestion(paper: dict, index: PaperIndex) -> None:
+    arxiv_id = paper["id"]
+    responded = st.session_state.get("responded", set())
+    is_added = (
+        arxiv_id in responded
+        or arxiv_id in st.session_state.get("learning_workspace", [])
+    )
+
+    with st.container(border=True):
+        title = " ".join(paper.get("title", arxiv_id).split())
+        st.markdown(f"**{title}**")
+
+        categories = paper.get("categories", [])
+        if categories:
+            st.caption(" ".join(f"`{cat}`" for cat in categories))
+
+        abstract = paper.get("abstract", "")
+        if abstract:
+            st.write(abstract[:320] + ("..." if len(abstract) > 320 else ""))
+
+        score = paper.get("raw_similarity", paper.get("rec_score"))
+        if score is not None:
+            st.caption(f"Similarity to closest workspace paper: {float(score):.3f}")
+
+        cols = st.columns(3)
+        with cols[0]:
+            if st.button(
+                "Added" if is_added else "Add",
+                key=f"workspace_similar_add_{arxiv_id}",
+                width="stretch",
+                disabled=is_added,
+            ):
+                _handle_workspace_suggestion_add(arxiv_id, index)
+        with cols[1]:
+            if st.button(
+                "Research",
+                key=f"workspace_similar_research_{arxiv_id}",
+                width="stretch",
+            ):
+                _open_in_research_mode(arxiv_id)
+        with cols[2]:
+            st.link_button(
+                "PDF",
+                f"https://arxiv.org/pdf/{arxiv_id}",
+                width="stretch",
+            )
+
+
+def _get_openai_api_key() -> str | None:
+    try:
+        return st.secrets.get("OPENAI_API_KEY")
+    except (FileNotFoundError, KeyError):
+        return None
+
+
+def _load_workspace_summary(workspace_papers: list[dict]) -> None:
+    signature = _workspace_signature(workspace_papers)
+    if (
+        st.session_state.get("workspace_summary")
+        and st.session_state.get("workspace_summary_signature") == signature
+    ):
+        return
+
+    api_key = _get_openai_api_key()
+    st.session_state.pop("workspace_summary", None)
+    st.session_state.pop("workspace_summary_signature", None)
+    try:
+        with st.spinner("Reading PDFs and summarizing workspace papers..."):
+            st.session_state["workspace_summary"] = summarize_workspace(
+                workspace_papers,
+                api_key=api_key,
+            )
+            st.session_state["workspace_summary_signature"] = signature
+    except ValueError as exc:
+        st.warning(
+            f"{exc} Add OPENAI_API_KEY to your environment or .streamlit/secrets.toml."
+        )
+    except Exception as exc:
+        st.error(f"Could not summarize the workspace: {exc}")
+
+
+def _load_workspace_similar_papers(
+    index: PaperIndex,
+    workspace_papers: list[dict],
+) -> None:
+    signature = _workspace_signature(workspace_papers)
+    if (
+        "workspace_similar_papers" in st.session_state
+        and st.session_state.get("workspace_similar_signature") == signature
+    ):
+        return
+
+    st.session_state.pop("workspace_similar_papers", None)
+    st.session_state.pop("workspace_similar_signature", None)
+    with st.spinner("Finding similar papers from workspace embeddings..."):
+        st.session_state["workspace_similar_papers"] = (
+            _find_workspace_similar_papers(index, workspace_papers)
+        )
+        st.session_state["workspace_similar_signature"] = signature
+        st.session_state["workspace_similar_requested"] = True
+
+
+def _load_workspace_concept_map(
+    index: PaperIndex,
+    workspace_papers: list[dict],
+    paper_similarity_threshold: float = 0.45,
+    concept_similarity_threshold: float = 0.35,
+) -> None:
+    workspace_ids = [paper["arxiv_id"] for paper in workspace_papers]
+    signature = _workspace_signature(workspace_papers)
+    params = (paper_similarity_threshold, concept_similarity_threshold)
+    if (
+        st.session_state.get("workspace_concept_map")
+        and st.session_state.get("workspace_concept_map_signature") == signature
+        and st.session_state.get("workspace_concept_map_params") == params
+    ):
+        return
+
+    st.session_state.pop("workspace_concept_map", None)
+    st.session_state.pop("workspace_concept_map_signature", None)
+    st.session_state.pop("workspace_concept_map_params", None)
+    with st.spinner("Building workspace concept map..."):
+        st.session_state["workspace_concept_map"] = build_workspace_concept_map(
+            index,
+            workspace_ids,
+            paper_similarity_threshold=paper_similarity_threshold,
+            concept_similarity_threshold=concept_similarity_threshold,
+        )
+        st.session_state["workspace_concept_map_signature"] = signature
+        st.session_state["workspace_concept_map_params"] = params
+
+
+def _render_map_summary(graph: dict) -> None:
+    summary = graph.get("summary", {})
+    counts = graph.get("counts", {})
+
+    cols = st.columns(3)
+    with cols[0]:
+        avg = summary.get("average_similarity")
+        st.metric("Avg Similarity", f"{avg:.2f}" if avg is not None else "n/a")
+    with cols[1]:
+        st.metric("Themes", summary.get("theme_count", 0))
+    with cols[2]:
+        st.metric("Concepts", counts.get("concepts", 0))
+
+    closest = summary.get("closest_pair")
+    if closest:
+        st.caption(
+            "Closest pair: "
+            f"{closest['source']} + {closest['target']} "
+            f"({closest['similarity']:.2f})"
+        )
+    isolated = summary.get("most_isolated")
+    if isolated:
+        st.caption(f"Most isolated paper: {isolated}")
+    theme_labels = summary.get("theme_labels", [])
+    if theme_labels:
+        st.caption("Theme anchors: " + ", ".join(theme_labels))
+    position_source = summary.get("position_source")
+    if position_source:
+        st.caption(f"Paper positions: {position_source} embedding space.")
+
+
+def _render_workspace_result_panel(index: PaperIndex, workspace_papers: list[dict]) -> None:
+    active_view = st.session_state.get("workspace_result_view")
+    if not active_view:
+        return
+
+    st.divider()
+
+    if active_view == "summary":
+        summary = st.session_state.get("workspace_summary")
+        if summary:
+            st.subheader("Summary")
+            st.markdown(summary)
+        return
+
+    if active_view == "similar":
+        similar_papers = st.session_state.get("workspace_similar_papers", [])
+        if similar_papers:
+            st.subheader("Similar Papers")
+            for paper in similar_papers:
+                _render_workspace_suggestion(paper, index)
+        elif st.session_state.get("workspace_similar_requested"):
+            st.info("No new similar papers were found for this workspace.")
+        return
+
+    if active_view == "visualization":
+        st.subheader("Visualization")
+        with st.expander("Map Controls", expanded=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.slider(
+                    "Paper link threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=st.session_state.get("workspace_map_paper_threshold", 0.45),
+                    step=0.05,
+                    key="workspace_map_paper_threshold",
+                    help="Only draw paper-paper links above this embedding similarity.",
+                )
+            with c2:
+                st.slider(
+                    "Concept link threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=st.session_state.get("workspace_map_concept_threshold", 0.35),
+                    step=0.05,
+                    key="workspace_map_concept_threshold",
+                    help="Only draw concept links above this embedding similarity.",
+                    disabled=not bool(getattr(index, "concept_embeddings", None)),
+                )
+        graph = st.session_state.get("workspace_concept_map")
+        if not graph or not graph.get("nodes"):
+            st.info("Add papers to the workspace to build a concept map.")
+            return
+
+        _render_map_summary(graph)
+        try:
+            fig = make_workspace_concept_map_figure(graph)
+            st.plotly_chart(fig, width="stretch")
+        except Exception as exc:
+            st.warning(f"Could not render workspace concept map: {exc}")
+            return
+
+        counts = graph.get("counts", {})
+        st.caption(
+            "Nodes: "
+            f"{counts.get('papers', 0)} papers, "
+            f"{counts.get('concepts', 0)} concept anchors. "
+            "Edges are weighted by embedding similarity."
+        )
+
+
+def _render_workspace(index: PaperIndex, paper_lookup):
     workspace_ids = st.session_state["learning_workspace"]
     workspace_papers = [
         paper_lookup[pid] for pid in workspace_ids if pid in paper_lookup
     ]
+    _sync_workspace_output_cache(workspace_papers)
 
     st.title("Workspace")
-    st.caption(
-        "Use summarize, compare, and visualize to learn more about connections between papers."
-    )
+
+    heading_cols = st.columns([0.76, 0.24], vertical_alignment="center")
+    with heading_cols[0]:
+        st.subheader("Added Papers")
+    with heading_cols[1]:
+        if st.button(
+            "Remove All",
+            key="remove_all_workspace",
+            width="stretch",
+            disabled=not workspace_papers,
+        ):
+            _remove_all_from_workspace()
+            st.rerun()
 
     if not workspace_papers:
         st.info("Add saved papers from the Papers folder to start a workspace.")
     else:
-        for paper in workspace_papers:
-            with st.container(border=True):
-                title = paper.get("title", paper["arxiv_id"])
-                st.markdown(f"**{title}**")
-                st.caption(paper["arxiv_id"])
+        with st.container(height=440, border=False):
+            for paper in workspace_papers:
+                with st.container(border=True):
+                    title = paper.get("title", paper["arxiv_id"])
+                    st.markdown(f"**{title}**")
+                    st.caption(paper["arxiv_id"])
 
-                abstract = paper.get("abstract", "")
-                if abstract:
-                    st.caption(abstract[:260] + ("..." if len(abstract) > 260 else ""))
+                    abstract = paper.get("abstract", "")
+                    if abstract:
+                        st.caption(
+                            abstract[:260] + ("..." if len(abstract) > 260 else "")
+                        )
 
-                cols = st.columns(3)
-                with cols[0]:
-                    if st.button(
-                        "Remove",
-                        key=f"remove_workspace_{paper['arxiv_id']}",
-                        use_container_width=True,
-                    ):
-                        _remove_from_workspace(paper["arxiv_id"])
-                        st.rerun()
+                    cols = st.columns(3)
+                    with cols[0]:
+                        if st.button(
+                            "Remove",
+                            key=f"remove_workspace_{paper['arxiv_id']}",
+                            width="stretch",
+                        ):
+                            _remove_from_workspace(paper["arxiv_id"])
+                            st.rerun()
 
-                with cols[1]:
-                    if st.button(
-                        "Research",
-                        key=f"workspace_research_{paper['arxiv_id']}",
-                        use_container_width=True,
-                    ):
-                        _open_in_research_mode(paper["arxiv_id"])
+                    with cols[1]:
+                        if st.button(
+                            "Research",
+                            key=f"workspace_research_{paper['arxiv_id']}",
+                            width="stretch",
+                        ):
+                            _open_in_research_mode(paper["arxiv_id"])
 
-                with cols[2]:
-                    st.link_button(
-                        "PDF",
-                        f"https://arxiv.org/pdf/{paper['arxiv_id']}",
-                        use_container_width=True,
-                    )
+                    with cols[2]:
+                        st.link_button(
+                            "PDF",
+                            f"https://arxiv.org/pdf/{paper['arxiv_id']}",
+                            width="stretch",
+                        )
 
     st.divider()
 
-    action_cols = st.columns(3)
-    with action_cols[0]:
-        _render_workspace_action("compare", "workspace_compare")
-    with action_cols[1]:
-        _render_workspace_action("summarize", "workspace_summarize")
-    with action_cols[2]:
-        _render_workspace_action("visualize", "workspace_visualize")
+    summary_running = st.session_state.get("workspace_pending_action") == "summary"
+
+    with st.container(key="workspace_action_bar"):
+        action_cols = st.columns(3)
+        with action_cols[0]:
+            if st.button(
+                "See More",
+                key="workspace_see_more",
+                width="stretch",
+                disabled=not workspace_papers or summary_running,
+                type="primary",
+            ):
+                _load_workspace_similar_papers(index, workspace_papers)
+                st.session_state["workspace_result_view"] = "similar"
+        with action_cols[1]:
+            if st.button(
+                "Summarizing..." if summary_running else "Summarize",
+                key="workspace_summarize",
+                width="stretch",
+                disabled=not workspace_papers or summary_running,
+                type="primary",
+            ):
+                st.session_state["workspace_pending_action"] = "summary"
+                st.session_state.pop("workspace_result_view", None)
+                st.rerun()
+        with action_cols[2]:
+            if st.button(
+                "Visualization",
+                key="workspace_visualize",
+                width="stretch",
+                disabled=not workspace_papers or summary_running,
+                type="primary",
+            ):
+                _load_workspace_concept_map(
+                    index,
+                    workspace_papers,
+                    paper_similarity_threshold=st.session_state.get(
+                        "workspace_map_paper_threshold",
+                        0.45,
+                    ),
+                    concept_similarity_threshold=st.session_state.get(
+                        "workspace_map_concept_threshold",
+                        0.35,
+                    ),
+                )
+                st.session_state["workspace_result_view"] = "visualization"
+
+    if summary_running:
+        _load_workspace_summary(workspace_papers)
+        st.session_state.pop("workspace_pending_action", None)
+        if st.session_state.get("workspace_summary"):
+            st.session_state["workspace_result_view"] = "summary"
+        st.rerun()
+
+    _render_workspace_result_panel(index, workspace_papers)
 
 
 def _toggle_right_sidebar():
@@ -231,36 +636,38 @@ def _inject_right_sidebar_styles():
     )
 
 
-def _render_saved_paper_row(paper, active_tab: str):
+def _render_saved_paper_row(paper, active_tab: str, row_index: int):
     arxiv_id = paper["arxiv_id"]
     title = paper.get("title", arxiv_id)
     user_id = st.session_state["user_id"]
+    row_key = f"{row_index}_{arxiv_id}"
 
     st.markdown(f"**{title[:80]}**")
 
+    if active_tab == "Daily Feed":
+        return
+
     # Layout for actions
-    cols = st.columns([0.33, 0.33, 0.34])
+    cols = st.columns([0.38, 0.34, 0.28])
     
     with cols[0]:
         is_added = arxiv_id in st.session_state.get("learning_workspace", [])
         if st.button(
             "Added" if is_added else "Add",
-            key=f"sidebar_add_{arxiv_id}",
-            use_container_width=True,
+            key=f"sidebar_add_{row_key}",
+            width="stretch",
             disabled=is_added,
         ):
             _add_to_workspace(arxiv_id, stay_on_tab=active_tab)
             st.rerun()
 
     with cols[1]:
-        if st.button("Read", key=f"sidebar_read_{arxiv_id}", use_container_width=True):
-            st.session_state["active_arxiv_id"] = arxiv_id
-            st.session_state["requested_tab"] = "Research Lab"
-            st.rerun()
+        if st.button("Read", key=f"sidebar_read_{row_key}", width="stretch"):
+            _open_in_research_mode(arxiv_id)
 
     with cols[2]:
         # The new Delete button
-        if st.button("🗑️", key=f"sidebar_delete_{arxiv_id}", use_container_width=True, help="Remove from saved papers"):
+        if st.button("🗑️", key=f"sidebar_delete_{arxiv_id}", width="stretch", help="Remove from saved papers"):
             from user.db import delete_saved_paper
             delete_saved_paper(user_id, arxiv_id)
             
@@ -292,8 +699,8 @@ def _render_right_sidebar(saved_papers, active_tab: str):
             if not saved_papers:
                 st.caption("No saved papers yet.")
             else:
-                for paper in saved_papers:
-                    _render_saved_paper_row(paper, active_tab)
+                for row_index, paper in enumerate(saved_papers):
+                    _render_saved_paper_row(paper, active_tab, row_index)
                     st.divider()
 
         with st.expander("Notes (0)", expanded=True):
@@ -308,7 +715,7 @@ def render_learning_mode(index):
     saved_papers = _enrich_saved_papers(saved, index)
     paper_lookup = {paper["arxiv_id"]: paper for paper in saved_papers}
 
-    _render_workspace(paper_lookup)
+    _render_workspace(index, paper_lookup)
 
 def render_workspace_sidebar(index, active_tab: str):
     _init_workspace_state()

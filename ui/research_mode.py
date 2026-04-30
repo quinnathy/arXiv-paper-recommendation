@@ -1,16 +1,29 @@
 import streamlit as st
-from streamlit_cropper import st_cropper
-import fitz  # PyMuPDF
 from PIL import Image
 import io
 import base64
 import os
 
-# Ensure this import matches the filename and function exactly
-from pipeline.transcribe import download_pdf, snag_and_drop_router
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    fitz = None
+
+try:
+    from streamlit_cropper import st_cropper
+except ImportError:
+    st_cropper = None
+
 from user.db import get_all_notes, save_research_note
 
 def render_research_mode(index=None):
+    if fitz is None:
+        st.error(
+            "Research Lab requires `pymupdf`. Install it with "
+            "`pip install pymupdf` or `pip install -r requirements.txt`."
+        )
+        return
+
     user_id = st.session_state["user_id"]
     active_id = st.session_state.get("active_arxiv_id", "No Paper Selected")
 
@@ -23,6 +36,8 @@ def render_research_mode(index=None):
     # --- STEP 1: DOWNLOAD CHECK ---
     # We do this before setting up columns to avoid the FileNotFoundError
     try:
+        from pipeline.transcribe import download_pdf
+
         with st.spinner(f"Fetching paper {active_id} from ArXiv..."):
             pdf_path = download_pdf(active_id)
         
@@ -52,13 +67,20 @@ def render_research_mode(index=None):
         page = doc[page_num]
 
         if crop_mode:
+            if st_cropper is None:
+                st.warning(
+                    "Snag Mode requires `streamlit-cropper`. Install it with "
+                    "`pip install streamlit-cropper` or `pip install -r requirements.txt`."
+                )
+                return
+
             pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
             img = Image.open(io.BytesIO(pix.tobytes()))
             
             st.info("Drag to select area. Click button to Snag.")
             cropped_img = st_cropper(img, realtime_update=True, box_color='#FF0000', aspect_ratio=None)
             
-            if st.button("✨ SNAG TO WALL", use_container_width=True):
+            if st.button("✨ SNAG TO WALL", width="stretch"):
                 buffered = io.BytesIO()
                 cropped_img.save(buffered, format="PNG")
                 img_str = base64.b64encode(buffered.getvalue()).decode()
@@ -86,7 +108,7 @@ def render_research_mode(index=None):
         # Frantic Manual Entry
         with st.form("brainstorm_form", clear_on_submit=True):
             note = st.text_area("Add a thought...", placeholder="Notes, questions, or raw text snippets...", height=100)
-            if st.form_submit_button("Append Note", use_container_width=True):
+            if st.form_submit_button("Append Note", width="stretch"):
                 if note:
                     save_research_note(user_id, f"<p>{note}</p>", active_id)
                     st.rerun()
