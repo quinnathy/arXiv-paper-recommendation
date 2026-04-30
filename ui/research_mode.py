@@ -102,4 +102,5 @@ def render_research_mode(index=None):
             for content, aid, ts in notes:
                 # We use markdown with unsafe_allow_html to render the base64 images we saved
                 st.markdown(content, unsafe_allow_html=True)
-                st.divider()
+                # Replace st.divider() with this for a tight, 5px margin
+                st.markdown("<hr style='margin: 5px 0px; border: 0.5px solid #eee;'>", unsafe_allow_html=True)
