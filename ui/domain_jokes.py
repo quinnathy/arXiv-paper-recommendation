@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -531,3 +532,44 @@ def select_domain_joke(
         )
     except Exception:
         return None
+
+
+def _available_loading_boards(data_dir: str | Path = "data") -> list[JokeBoard]:
+    meta_path = Path(data_dir) / JOKE_EMBEDDINGS_META_FILE
+    if not meta_path.exists():
+        return []
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as fh:
+            keys = set(json.load(fh).get("keys", []))
+        saved_boards = [board for board in JOKE_BOARDS if board.key in keys]
+        return saved_boards
+    except Exception:
+        return []
+
+
+def random_loading_joke(data_dir: str | Path = "data") -> str:
+    """Return a random joke from locally available joke metadata."""
+    boards = _available_loading_boards(data_dir)
+    if not boards:
+        return ""
+
+    board = random.choice(boards)
+    return random.choice(board.jokes)
+
+
+def random_loading_jokes(
+    count: int = 5,
+    data_dir: str | Path = "data",
+) -> list[str]:
+    """Return a small rotating set of local jokes for loading states."""
+    boards = _available_loading_boards(data_dir)
+    if not boards:
+        return []
+
+    jokes = [joke for board in boards for joke in board.jokes]
+    if not jokes:
+        return []
+
+    count = max(1, count)
+    return [random.choice(jokes) for _ in range(count)]

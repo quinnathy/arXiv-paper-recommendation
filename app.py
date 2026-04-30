@@ -78,7 +78,7 @@ if _css_path.exists():
     st.markdown(f"<style>{_css_path.read_text()}</style>", unsafe_allow_html=True)
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def load_index() -> PaperIndex:
     """Load the paper index once and cache it across Streamlit reruns.
 

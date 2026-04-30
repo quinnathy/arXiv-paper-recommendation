@@ -10,7 +10,7 @@ from recommender.query_search import expand_query, search_papers
 from user.db import get_seen_ids, log_feedback, update_centroids
 from user.profile import apply_feedback
 from user.session import save_centroids_to_session
-from ui.components import paper_card
+from ui.components import loading_spinner_with_message, paper_card
 
 
 QUERY_SEARCH_EXAMPLES = [
@@ -55,7 +55,7 @@ def _rotating_search_placeholder() -> str:
     return QUERY_SEARCH_EXAMPLES[idx % len(QUERY_SEARCH_EXAMPLES)]
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_query_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
 
@@ -134,7 +134,7 @@ def render_query_search(index: PaperIndex) -> bool:
             "Past 30 days": 30,
         }[time_filter_label]
         expanded = expand_query(query)
-        with st.spinner("Searching personalized paper results..."):
+        with loading_spinner_with_message():
             model = _get_query_embed_model()
             query_embedding = model.embed_query(expanded)
             results = search_papers(
