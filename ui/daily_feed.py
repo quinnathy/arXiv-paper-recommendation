@@ -242,7 +242,8 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     user_id = st.session_state["user_id"]
     user = get_user(user_id)
 
-    render_query_search(index)
+    if render_query_search(index):
+        return
 
     hour = datetime.now().hour
     if hour < 5:
