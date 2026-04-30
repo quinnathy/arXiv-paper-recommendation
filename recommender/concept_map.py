@@ -778,10 +778,6 @@ def make_workspace_concept_map_figure(graph: dict):
                 customdata=[
                     [
                         node.get("title", node["label"]),
-                        node.get(
-                            "theme_label",
-                            f"Theme {int(node.get('theme', 0)) + 1}",
-                        ),
                         node.get("primary_category", "unknown"),
                         node.get("paper_connection_count", 0),
                         node.get("concept_connection_count", 0),
@@ -791,11 +787,10 @@ def make_workspace_concept_map_figure(graph: dict):
                 ],
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
-                    "theme: %{customdata[1]}<br>"
-                    "category: %{customdata[2]}<br>"
-                    "paper links: %{customdata[3]}<br>"
-                    "shared concept links: %{customdata[4]}<br>"
-                    "paper-only concepts: %{customdata[5]}<extra></extra>"
+                    "category: %{customdata[1]}<br>"
+                    "paper links: %{customdata[2]}<br>"
+                    "shared concept links: %{customdata[3]}<br>"
+                    "paper-only concepts: %{customdata[4]}<extra></extra>"
                 ),
             )
         )

@@ -36,6 +36,19 @@ QUERY_SEARCH_EXAMPLES = [
 ]
 
 
+def _clear_query_search_state() -> None:
+    for key in (
+        "query_search_input",
+        "query_search_time_filter",
+        "query_search_options_open",
+        "query_search_query",
+        "query_search_expanded_query",
+        "query_search_results",
+        "query_search_clear_requested",
+    ):
+        st.session_state.pop(key, None)
+
+
 def _rotating_search_placeholder() -> str:
     idx = st.session_state.get("query_search_example_idx", 0)
     st.session_state["query_search_example_idx"] = idx + 1
@@ -77,6 +90,9 @@ def _handle_search_feedback(arxiv_id: str, signal: str, index: PaperIndex) -> No
 
 def render_query_search(index: PaperIndex) -> bool:
     """Render query search and return True when search results own the page."""
+    if st.session_state.pop("query_search_clear_requested", False):
+        _clear_query_search_state()
+
     user_id = st.session_state["user_id"]
 
     st.markdown("**Search papers by topic, method, dataset, or research question...**")
@@ -140,13 +156,8 @@ def render_query_search(index: PaperIndex) -> bool:
         return False
 
     st.subheader(f"Search results for \"{st.session_state.get('query_search_query', '')}\"")
-    if st.button("Back to personalized feed", key="query_search_clear"):
-        for key in (
-            "query_search_query",
-            "query_search_expanded_query",
-            "query_search_results",
-        ):
-            st.session_state.pop(key, None)
+    if st.button("Go back to daily recommendations", key="query_search_clear"):
+        st.session_state["query_search_clear_requested"] = True
         st.rerun()
 
     for meta in results:

@@ -150,10 +150,16 @@ class TestSessionLoginLifecycle:
         )
         fake_streamlit.session_state["todays_recs"] = [{"id": "x"}]
         fake_streamlit.session_state["responded"] = {"x"}
+        fake_streamlit.session_state["learning_workspace"] = ["2401.00001"]
+        fake_streamlit.session_state["workspace_result_view"] = "visualization"
+        fake_streamlit.session_state["query_search_results"] = [{"id": "y"}]
 
         assert user_session.login_with_credentials("erin", "erin-password")
         assert "todays_recs" not in fake_streamlit.session_state
         assert "responded" not in fake_streamlit.session_state
+        assert "learning_workspace" not in fake_streamlit.session_state
+        assert "workspace_result_view" not in fake_streamlit.session_state
+        assert "query_search_results" not in fake_streamlit.session_state
 
     def test_login_with_credentials_failure_does_not_onboard(self, db_path, fake_streamlit):
         create_user(
@@ -190,6 +196,13 @@ class TestSessionLoginLifecycle:
         assert user_session.login_with_credentials("gina", "gina-password")
         fake_streamlit.session_state["todays_recs"] = [{"id": "z"}]
         fake_streamlit.session_state["responded"] = {"z"}
+        fake_streamlit.session_state["learning_workspace"] = ["2401.00002"]
+        fake_streamlit.session_state["workspace_similar_papers"] = [{"id": "a"}]
+        fake_streamlit.session_state["workspace_result_view"] = "similar"
+        fake_streamlit.session_state["workspace_map_paper_threshold"] = 0.8
+        fake_streamlit.session_state["query_search_results"] = [{"id": "b"}]
+        fake_streamlit.session_state["active_arxiv_id"] = "2401.00002"
+        fake_streamlit.session_state["active_tab_value"] = "Research Lab"
 
         user_session.logout_user()
 
@@ -201,3 +214,10 @@ class TestSessionLoginLifecycle:
         assert ss["onboarded"] is False
         assert "todays_recs" not in ss
         assert "responded" not in ss
+        assert "learning_workspace" not in ss
+        assert "workspace_similar_papers" not in ss
+        assert "workspace_result_view" not in ss
+        assert "workspace_map_paper_threshold" not in ss
+        assert "query_search_results" not in ss
+        assert "active_arxiv_id" not in ss
+        assert "active_tab_value" not in ss

@@ -32,6 +32,24 @@ div.stButton > button {
     font-family: 'Newsreader', serif !important;
 }
 
+[data-testid="stSidebar"] div[data-testid="stButton"] button[kind="primary"] {
+    background-color: #1a1a1a !important;
+    border-color: #1a1a1a !important;
+    color: #ffffff !important;
+    font-weight: 800 !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button[kind="primary"] p {
+    color: #ffffff !important;
+    font-weight: 800 !important;
+}
+
+[data-testid="stSidebar"] div[data-testid="stButton"] button[kind="secondary"] {
+    background-color: transparent !important;
+    border-color: rgba(26, 26, 26, 0.28) !important;
+    color: #1a1a1a !important;
+}
+
 /* This targets the specific headers in your feed/lab without affecting sidebars */
 [data-testid="stMarkdownContainer"] h1, 
 [data-testid="stMarkdownContainer"] h2, 
