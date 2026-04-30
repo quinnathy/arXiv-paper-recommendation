@@ -15,6 +15,7 @@ from user.session import save_centroids_to_session
 
 
 WORKSPACE_SIMILAR_LIMIT = 5
+WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION = "custom-distance-v1"
 
 
 def _init_workspace_state():
@@ -270,12 +271,16 @@ def _load_workspace_similar_papers(
 def _load_workspace_concept_map(
     index: PaperIndex,
     workspace_papers: list[dict],
-    paper_similarity_threshold: float = 0.45,
+    paper_similarity_threshold: float = 0.35,
     concept_similarity_threshold: float = 0.35,
 ) -> None:
     workspace_ids = [paper["arxiv_id"] for paper in workspace_papers]
     signature = _workspace_signature(workspace_papers)
-    params = (paper_similarity_threshold, concept_similarity_threshold)
+    params = (
+        paper_similarity_threshold,
+        concept_similarity_threshold,
+        WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION,
+    )
     if (
         st.session_state.get("workspace_concept_map")
         and st.session_state.get("workspace_concept_map_signature") == signature
@@ -304,7 +309,7 @@ def _render_map_summary(graph: dict) -> None:
     cols = st.columns(3)
     with cols[0]:
         avg = summary.get("average_similarity")
-        st.metric("Avg Similarity", f"{avg:.2f}" if avg is not None else "n/a")
+        st.metric("Avg Score", f"{avg:.2f}" if avg is not None else "n/a")
     with cols[1]:
         st.metric("Themes", summary.get("theme_count", 0))
     with cols[2]:
@@ -325,7 +330,7 @@ def _render_map_summary(graph: dict) -> None:
         st.caption("Theme anchors: " + ", ".join(theme_labels))
     position_source = summary.get("position_source")
     if position_source:
-        st.caption(f"Paper positions: {position_source} embedding space.")
+        st.caption(f"Paper positions: {position_source}.")
 
 
 def _render_workspace_result_panel(index: PaperIndex, workspace_papers: list[dict]) -> None:
@@ -361,10 +366,10 @@ def _render_workspace_result_panel(index: PaperIndex, workspace_papers: list[dic
                     "Paper link threshold",
                     min_value=0.0,
                     max_value=1.0,
-                    value=st.session_state.get("workspace_map_paper_threshold", 0.45),
+                    value=st.session_state.get("workspace_map_paper_threshold", 0.35),
                     step=0.05,
                     key="workspace_map_paper_threshold",
-                    help="Only draw paper-paper links above this embedding similarity.",
+                    help="Only draw paper-paper links above this custom connection score.",
                 )
             with c2:
                 st.slider(
@@ -395,7 +400,7 @@ def _render_workspace_result_panel(index: PaperIndex, workspace_papers: list[dic
             "Nodes: "
             f"{counts.get('papers', 0)} papers, "
             f"{counts.get('concepts', 0)} concept anchors. "
-            "Edges are weighted by embedding similarity."
+            "Paper edges are weighted by a custom connection score."
         )
 
 
@@ -502,7 +507,7 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                     workspace_papers,
                     paper_similarity_threshold=st.session_state.get(
                         "workspace_map_paper_threshold",
-                        0.45,
+                        0.35,
                     ),
                     concept_similarity_threshold=st.session_state.get(
                         "workspace_map_concept_threshold",
