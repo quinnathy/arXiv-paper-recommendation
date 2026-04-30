@@ -29,6 +29,7 @@ def _clear_query_search_state() -> None:
     for key in (
         "query_search_input",
         "query_search_time_filter",
+        "query_search_options_open",
         "query_search_query",
         "query_search_expanded_query",
         "query_search_results",

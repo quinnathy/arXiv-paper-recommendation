@@ -79,13 +79,28 @@ def render_query_search(index: PaperIndex) -> None:
     user_id = st.session_state["user_id"]
 
     st.markdown("**Search papers by topic, method, dataset, or research question...**")
-    query = st.text_input(
-        "Search papers by topic, method, dataset, or research question...",
-        placeholder=_rotating_search_placeholder(),
-        key="query_search_input",
-        label_visibility="collapsed",
-    )
-    with st.expander("Search options", expanded=False):
+
+    search_col, options_col = st.columns([0.92, 0.08])
+    with search_col:
+        query = st.text_input(
+            "Search papers by topic, method, dataset, or research question...",
+            placeholder=_rotating_search_placeholder(),
+            key="query_search_input",
+            label_visibility="collapsed",
+        )
+    with options_col:
+        options_open = st.session_state.get("query_search_options_open", False)
+        if st.button(
+            "▲" if options_open else "▼",
+            key="query_search_options_toggle",
+            help="Search options",
+            use_container_width=True,
+        ):
+            st.session_state["query_search_options_open"] = not options_open
+            st.rerun()
+
+    time_filter_label = st.session_state.get("query_search_time_filter", "All time")
+    if st.session_state.get("query_search_options_open", False):
         time_filter_label = st.selectbox(
             "Time range",
             options=["All time", "Past year", "Past 6 months", "Past 30 days"],

@@ -415,6 +415,17 @@ def get_feedback_counts(user_id: str) -> dict[str, int]:
     return counts
 
 
+def get_interacted_paper_count(user_id: str) -> int:
+    """Count distinct papers this user has explicitly acted on."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT arxiv_id) FROM feedback WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return int(row[0] if row else 0)
+
+
 # research mode
 def save_research_note(user_id: str, content: str, source_arxiv_id: str = None):
     now = datetime.now(timezone.utc).isoformat()
