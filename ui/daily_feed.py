@@ -240,6 +240,16 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
 def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     user = get_user(st.session_state["user_id"])
 
+    centroids = st.session_state.get("user_centroids")
+
+    domain_joke = None
+    if centroids is not None:
+        domain_joke = select_domain_joke(
+            centroids,
+            st.session_state["user_id"],
+        )
+
+    
     if render_query_search(index):
         return
     
@@ -255,6 +265,9 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
         greeting = "Up late? No worries"
 
     st.title(f"{greeting}, {user['display_name']}")
+    if domain_joke:
+        st.caption(f"🧠 {domain_joke['label']}: {domain_joke['joke']}")
+
 
     if "todays_recs" not in st.session_state:
         centroids = st.session_state["user_centroids"]

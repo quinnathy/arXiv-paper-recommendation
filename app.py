@@ -4,6 +4,8 @@ Thin shell that initializes the database, loads the paper index (cached),
 and routes to the appropriate page based on onboarding state.
 """
 
+import base64
+
 from pipeline.runtime import configure_single_thread_runtime
 
 configure_single_thread_runtime()
@@ -67,7 +69,7 @@ def _activate_main_tab(tab: str) -> None:
 
 
 st.set_page_config(
-    page_title="ArXiv Daily",
+    page_title="Folio",
     page_icon="📄",
     layout="centered",
 )
@@ -117,18 +119,43 @@ else:
         user_id = st.session_state["user_id"]
         user_data = get_user(user_id)
 
-        # Profile Image and Name
         avatar_file = user_data.get("profile_pic") or "default_avatar.jpg"
-        avatar_path = Path(".streamlit/static/avatars") / avatar_file 
+        avatar_path = Path(".streamlit/static/avatars") / avatar_file
 
         if avatar_path.exists():
-            # Read as binary to ensure it renders correctly regardless of browser security
             with open(avatar_path, "rb") as f:
-                st.image(f.read(), width=80)
+                img_b64 = base64.b64encode(f.read()).decode()
+
+            profile_html = (
+            f'<div style="display:flex; flex-direction:column; align-items:center; justify-content:center; margin-top:10px; width:100%;">'
+            f'<img src="data:image/png;base64,{img_b64}" '
+            f'style="width:120px;height:120px;border-radius:50%;object-fit:cover;display:block;margin:0 auto;">'
+            f'<div style="text-align:center;font-weight:600;margin-top:15px;margin-bottom:15px;font-size:4rem;">'
+            f'{user_data["display_name"]}'
+            f'</div>'
+            f'</div>'
+            )
+
+            st.markdown(profile_html, unsafe_allow_html=True)
+
         else:
-            # Optional fallback if the file is missing
-            st.markdown('<div style="font-size:3.5rem;">&#129489;</div>', unsafe_allow_html=True) 
-        st.markdown(f"**{user_data['display_name']}**")
+            st.markdown(
+                f"""
+        <div style="
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            margin-top:10px;
+            width:100%;
+        ">
+            <div style="font-size:4rem;">&#129489;</div>
+            <div style="font-weight:600; margin-top:8px; font-size:5rem;">
+                {user_data['display_name']}
+            </div>
+        </div>
+        """,
+                unsafe_allow_html=True
+            )
 
         if st.button(
             "User Profile",
