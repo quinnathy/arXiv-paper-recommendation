@@ -49,6 +49,15 @@ VIZ_ARTIFACTS = (
 )
 
 
+def _resolve_user_diversity(fallback: float | None = None) -> float:
+    """Return a usable diversity value and repair missing session state."""
+    value = st.session_state.get("user_diversity")
+    if value is None:
+        value = 0.5 if fallback is None else fallback
+        st.session_state["user_diversity"] = value
+    return float(value)
+
+
 def _handle_feedback(
     arxiv_id: str, signal: str, index: PaperIndex
 ) -> None:
@@ -184,7 +193,7 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
         searched_clusters = find_nearest_clusters(
             user_centroids,
             index.centroids,
-            diversity=st.session_state.get("user_diversity", 0.5),
+            diversity=_resolve_user_diversity(),
         )
 
     id_to_index = {meta["id"]: i for i, meta in enumerate(index.paper_meta)}
@@ -270,7 +279,7 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
 
     if "todays_recs" not in st.session_state:
         centroids = st.session_state["user_centroids"]
-        diversity = st.session_state["user_diversity"]
+        diversity = _resolve_user_diversity(user.get("diversity"))
         seen_ids = get_seen_ids(user_id)
         excluded_ids = seen_ids | st.session_state["shown_ids"]
         with loading_spinner_with_message():

@@ -423,13 +423,21 @@ def _render_map_summary(graph: dict) -> None:
     with cols[0]:
         st.metric("Papers", counts.get("papers", 0))
     with cols[1]:
-        st.metric("Cluster centroids", counts.get("clusters", 0))
+        st.metric("Notable Connections", counts.get("connections", 0))
 
-    position_source = summary.get("position_source")
-    if position_source:
-        st.caption(f"Paper positions: {position_source}.")
     if summary.get("connections_source") == "abstracts":
         st.caption("[ran on only abstracts]")
+
+
+def _render_paper_node_key(graph: dict) -> None:
+    paper_nodes = [node for node in graph.get("nodes", []) if node.get("type") == "paper"]
+    if not paper_nodes:
+        return
+    key_text = "  ".join(
+        f"**{node.get('label', '?')}** - {node.get('title', node.get('key', 'Paper'))}"
+        for node in paper_nodes
+    )
+    st.markdown(key_text)
 
 
 def _render_workspace_result_panel(
@@ -461,7 +469,7 @@ def _render_workspace_result_panel(
         return
 
     if active_view == "visualization":
-        st.subheader("Visualization")
+        st.subheader("Visualize")
         if not _workspace_summary_ready(workspace_papers):
             st.info("Run Summarize before opening the visualization.")
             return
@@ -475,6 +483,7 @@ def _render_workspace_result_panel(
             return
 
         _render_map_summary(graph)
+        _render_paper_node_key(graph)
         try:
             fig = make_workspace_concept_map_figure(graph)
             st.plotly_chart(fig, width="stretch")
@@ -486,9 +495,7 @@ def _render_workspace_result_panel(
         st.caption(
             "Nodes: "
             f"{counts.get('papers', 0)} papers, "
-            f"{counts.get('clusters', 0)} cluster centroids. "
-            f"{counts.get('connections', 0)} AI connections. "
-            "Positions use the PCA embedding map."
+            f"{counts.get('connections', 0)} AI connections."
         )
 
 

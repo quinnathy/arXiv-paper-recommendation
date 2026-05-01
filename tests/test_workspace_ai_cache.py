@@ -51,6 +51,7 @@ def test_parse_workspace_connections_filters_and_limits():
                 "name": "Shared model",
                 "summary_section": "Similarities",
                 "rationale": "Both papers use related models.",
+                "description": "Both papers use related models for the same task.",
                 "confidence": 0.8,
             },
             {
@@ -78,6 +79,7 @@ def test_parse_workspace_connections_filters_and_limits():
             "name": "Shared model",
             "summary_section": "Similarities",
             "rationale": "Both papers use related models.",
+            "description": "Both papers use related models for the same task.",
             "confidence": 0.8,
         }
     ]

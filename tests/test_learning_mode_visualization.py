@@ -56,6 +56,9 @@ class _FakeStreamlit:
         self.buttons.append((label, kwargs))
         return False
 
+    def markdown(self, *_args, **_kwargs):
+        pass
+
 
 def test_visualization_view_loads_map_for_current_workspace(monkeypatch):
     fake_st = _FakeStreamlit()

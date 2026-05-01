@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import textwrap
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +25,11 @@ CONNECTION_COLORS = {
     "methodology": "#059669",
     "dataset": "#2563eb",
     "evaluation": "#dc2626",
+    "multiple": "#111827",
 }
+EDGE_HOVER_WRAP_WIDTH = 56
+EDGE_HOVER_MARKER_STEPS = 13
+PAPER_LABEL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
 def _unit_rows(matrix: np.ndarray) -> np.ndarray:
@@ -45,6 +50,79 @@ def _short_title(title: str, max_words: int = 2) -> str:
     if not words:
         return "Paper"
     return " ".join(words[:max_words])
+
+
+def _paper_letter(index: int) -> str:
+    if index < len(PAPER_LABEL_ALPHABET):
+        return PAPER_LABEL_ALPHABET[index]
+    quotient, remainder = divmod(index, len(PAPER_LABEL_ALPHABET))
+    return f"{PAPER_LABEL_ALPHABET[remainder]}{quotient + 1}"
+
+
+def _wrap_hover_text(text: str, width: int = EDGE_HOVER_WRAP_WIDTH) -> str:
+    raw_text = str(text or "").strip()
+    if not raw_text:
+        return ""
+    paragraphs = [
+        " ".join(paragraph.split())
+        for paragraph in raw_text.split("\n\n")
+        if paragraph.strip()
+    ]
+    wrapped = [
+        "<br>".join(
+            textwrap.wrap(paragraph, width=width, break_long_words=False)
+        )
+        for paragraph in paragraphs
+    ]
+    return "<br>────────────────────<br>".join(wrapped)
+
+
+def _combine_connection_edges(edges: list[dict]) -> list[dict]:
+    grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for edge in edges:
+        pair = tuple(sorted([str(edge["source"]), str(edge["target"])]))
+        grouped[pair].append(edge)
+
+    combined: list[dict] = []
+    for pair_edges in grouped.values():
+        if len(pair_edges) == 1:
+            combined.append(pair_edges[0])
+            continue
+
+        types = []
+        names = []
+        descriptions = []
+        sections = []
+        confidence = 0.0
+        for edge in pair_edges:
+            edge_type = str(edge.get("type") or "")
+            if edge_type and edge_type not in types:
+                types.append(edge_type)
+            name = str(edge.get("name") or "")
+            if name and name not in names:
+                names.append(name)
+            description = str(edge.get("description") or edge.get("rationale") or "")
+            if description:
+                descriptions.append(f"{edge_type.title()}: {description}")
+            section = str(edge.get("summary_section") or "")
+            if section and section not in sections:
+                sections.append(section)
+            confidence = max(confidence, float(edge.get("confidence", 0.0) or 0.0))
+
+        first = pair_edges[0].copy()
+        first.update(
+            {
+                "type": "multiple",
+                "name": "Multiple connections",
+                "connection_types": ", ".join(t.title() for t in types),
+                "summary_section": ", ".join(sections),
+                "rationale": "; ".join(names),
+                "description": "\n\n".join(descriptions),
+                "confidence": confidence,
+            }
+        )
+        combined.append(first)
+    return combined
 
 
 def _cluster_centroid_names(index: PaperIndex) -> dict[int, str]:
@@ -257,7 +335,7 @@ def build_workspace_concept_map(
             {
                 "id": f"paper:{arxiv_id}",
                 "key": arxiv_id,
-                "label": _short_title(title),
+                "label": _paper_letter(pos),
                 "title": title,
                 "type": "paper",
                 "primary_category": get_primary_category(meta.get("categories", "")),
@@ -286,13 +364,23 @@ def build_workspace_concept_map(
                 "id": f"connection:{edge_i}",
                 "source": f"paper:{source}",
                 "target": f"paper:{target}",
+                "source_title": paper_nodes_by_key[source].get("title", source),
+                "target_title": paper_nodes_by_key[target].get("title", target),
                 "type": connection_type,
                 "name": str(connection.get("name") or connection_type.title()),
                 "summary_section": str(connection.get("summary_section") or ""),
                 "rationale": str(connection.get("rationale") or ""),
+                "description": str(
+                    connection.get("description")
+                    or connection.get("overview")
+                    or connection.get("rationale")
+                    or ""
+                ),
                 "confidence": float(connection.get("confidence", 0.0) or 0.0),
             }
         )
+
+    edges = _combine_connection_edges(edges)
 
     return {
         "nodes": nodes,
@@ -349,6 +437,7 @@ def make_workspace_concept_map_figure(graph: dict):
                     "<b>%{customdata[1]}</b><br>"
                     "cluster %{customdata[0]}<extra></extra>"
                 ),
+                hoverinfo="skip",
             )
         )
 
@@ -367,16 +456,33 @@ def make_workspace_concept_map_figure(graph: dict):
             target = paper_nodes_by_id.get(edge.get("target"))
             if source is None or target is None:
                 continue
-            mid_x = (float(source["x"]) + float(target["x"])) / 2
-            mid_y = (float(source["y"]) + float(target["y"])) / 2
             data = [
                 str(edge.get("name") or edge_type.title()),
-                str(edge_type),
-                str(edge.get("rationale") or ""),
+                str(edge.get("connection_types") or edge_type.title()),
+                _wrap_hover_text(edge.get("description") or edge.get("rationale") or ""),
+                _wrap_hover_text(edge.get("source_title") or ""),
+                _wrap_hover_text(edge.get("target_title") or ""),
             ]
-            x_values.extend([source["x"], mid_x, target["x"], None])
-            y_values.extend([source["y"], mid_y, target["y"], None])
-            customdata.extend([data, data, data, None])
+            edge_x = [float(source["x"])]
+            edge_y = [float(source["y"])]
+            edge_custom: list[list[str] | None] = [data]
+            for step in range(1, EDGE_HOVER_MARKER_STEPS + 1):
+                fraction = step / (EDGE_HOVER_MARKER_STEPS + 1)
+                edge_x.append(
+                    float(source["x"])
+                    + (float(target["x"]) - float(source["x"])) * fraction
+                )
+                edge_y.append(
+                    float(source["y"])
+                    + (float(target["y"]) - float(source["y"])) * fraction
+                )
+                edge_custom.append(data)
+            edge_x.extend([float(target["x"]), None])
+            edge_y.extend([float(target["y"]), None])
+            edge_custom.extend([data, None])
+            x_values.extend(edge_x)
+            y_values.extend(edge_y)
+            customdata.extend(edge_custom)
         if x_values:
             fig.add_trace(
                 go.Scatter(
@@ -385,15 +491,30 @@ def make_workspace_concept_map_figure(graph: dict):
                     mode="lines+markers",
                     name=edge_type.title(),
                     customdata=customdata,
-                    line=dict(width=2.2, color=CONNECTION_COLORS[edge_type]),
-                    marker=dict(size=8, color="rgba(255,255,255,0.01)"),
+                    line=dict(width=3, color=CONNECTION_COLORS[edge_type]),
+                    marker=dict(size=12, color="rgba(255,255,255,0.01)"),
                     hovertemplate=(
                         "<b>%{customdata[0]}</b><br>"
                         "type: %{customdata[1]}<br>"
+                        "papers: %{customdata[3]} to %{customdata[4]}<br><br>"
                         "%{customdata[2]}<extra></extra>"
                     ),
                 )
             )
+
+    for edge_type, color in CONNECTION_COLORS.items():
+        if edge_type in edges_by_type:
+            continue
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="lines",
+                name=edge_type.title(),
+                line=dict(width=3, color=color),
+                hoverinfo="skip",
+            )
+        )
 
     if paper_nodes:
         fig.add_trace(
@@ -403,12 +524,13 @@ def make_workspace_concept_map_figure(graph: dict):
                 mode="markers+text",
                 name="Workspace paper",
                 text=[node["label"] for node in paper_nodes],
-                textposition="top center",
+                textposition="middle center",
+                textfont=dict(color="white", size=13, family="Arial Black, Arial"),
                 marker=dict(
                     symbol="circle",
-                    size=18,
+                    size=22,
                     color="#2563eb",
-                    line=dict(width=1.5, color="white"),
+                    line=dict(width=1.75, color="white"),
                 ),
                 customdata=[
                     [

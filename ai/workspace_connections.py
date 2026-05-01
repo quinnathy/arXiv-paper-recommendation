@@ -102,6 +102,9 @@ def parse_workspace_connections(
                 "name": str(item.get("name") or connection_type.title()),
                 "summary_section": section,
                 "rationale": str(item.get("rationale") or ""),
+                "description": str(
+                    item.get("description") or item.get("rationale") or ""
+                ),
                 "confidence": max(0.0, min(1.0, confidence)),
             }
         )
@@ -146,12 +149,14 @@ def generate_workspace_connections(
         "connection names are meaningfully different.\n"
         "- The name must be a short hover label, ideally 2-6 words.\n"
         "- The rationale must be one sentence.\n\n"
+        "- The description must be one short paragraph explaining the connection "
+        "in enough detail for a click popup.\n\n"
         "JSON shape:\n"
         '{"connections":[{"source":"arxiv_id","target":"arxiv_id",'
         '"type":"thesis|assumption|methodology|dataset|evaluation",'
         '"name":"short hover label","summary_section":"Thesis|Shared Research '
         'Problems / Ideas|Similarities","rationale":"one sentence",'
-        '"confidence":0.0}]}\n\n'
+        '"description":"one short paragraph","confidence":0.0}]}\n\n'
         f"Workspace summary:\n{summary_context}\n\n"
         f"Workspace papers:\n{_paper_context(papers)}"
     )
@@ -178,4 +183,3 @@ def generate_workspace_connections(
     if not text:
         raise RuntimeError("The connection response did not include any text.")
     return parse_workspace_connections(_loads_json_object(text), papers)
-

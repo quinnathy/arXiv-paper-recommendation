@@ -206,7 +206,15 @@ def render_step_two(index: PaperIndex, db_path: str) -> None:
             )
             
             # Finalize session [cite: 3385, 5117]
-            st.session_state.update({"user_id": user_id, "user_centroids": result.centroids, "onboarded": True})
+            st.session_state.update({
+                "user_id": user_id,
+                "user_centroids": result.centroids,
+                "user_k_u": result.centroids.shape[0],
+                "user_diversity": diversity,
+                "thread_labels": result.thread_labels,
+                "thread_weights": result.thread_weights,
+                "onboarded": True,
+            })
             st.rerun()
 
         except Exception as e:
