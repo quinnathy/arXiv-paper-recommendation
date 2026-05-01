@@ -1,9 +1,7 @@
-"""Onboarding page: topic & concept selection, free-text interests,
-optional Scholar profile, and diversity slider.
-"""
+"""Onboarding page: account setup, profile picture, and research interests."""
 
 from __future__ import annotations
-
+from pathlib import Path
 import numpy as np
 import streamlit as st
 
@@ -31,85 +29,84 @@ from user.profile import (
     make_scholar_seed,
 )
 
+# Constants for avatar selection
+AVATARS = [f"avatar_{i}.jpg" for i in range(1, 7)]
 
 @st.cache_resource(show_spinner=False)
 def _get_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
-
 
 def make_category_seeds_from_topic_labels(
     selected_labels: list[str],
     category_centroids: dict[str, np.ndarray],
 ) -> list[SeedSignal]:
     """Build category seeds from human-readable onboarding labels."""
-    topic_keys = expand_topic_labels(
-        selected_labels=selected_labels,
-        topic_labels=TOPIC_LABELS,
-        category_centroids=category_centroids,
-    )
+    topic_keys = expand_topic_labels(selected_labels, TOPIC_LABELS, category_centroids)
     if selected_labels and not topic_keys:
-        raise ValueError(
-            "None of the selected onboarding topics are available in the "
-            "current corpus category centroids."
-        )
+        raise ValueError("Selected topics are not available in current centroids.")
 
     seeds: list[SeedSignal] = []
     for code in topic_keys:
-        label = next(
-            (
-                selected_label
-                for selected_label in selected_labels
-                if code in TOPIC_LABELS.get(selected_label, [])
-            ),
-            code,
-        )
+        label = next((l for l in selected_labels if code in TOPIC_LABELS.get(l, [])), code)
         seeds.append(make_category_seed(code, label, category_centroids[code]))
     return seeds
 
-
 def render_onboarding(index: PaperIndex, db_path: str) -> None:
+    """Render the multi-page onboarding flow."""
+    if "onboarding_step" not in st.session_state:
+        st.session_state["onboarding_step"] = 1
+
+    if st.session_state["onboarding_step"] == 1:
+        render_step_one()
+    else:
+        render_step_two(index, db_path)
+
+def render_step_one() -> None:
+    """Step 1: Account setup and binary-safe avatar selection."""
     st.title("ArXiv Daily")
     st.write("Personalized paper recommendations from arXiv, delivered daily.")
     st.divider()
+
     if "auth_mode" not in st.session_state:
         st.session_state["auth_mode"] = None
 
     mode = st.session_state["auth_mode"]
+
+    # Welcome / Mode Selection [cite: 3352, 4901]
     if mode is None:
         st.subheader("Welcome")
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("Log in", width="stretch"):
+            if st.button("Log in", use_container_width=True):
                 st.session_state["auth_mode"] = "Log in"
                 st.rerun()
         with col2:
-            if st.button("Sign up", width="stretch"):
+            if st.button("Sign up", use_container_width=True):
                 st.session_state["auth_mode"] = "Create account"
                 st.rerun()
         with col3:
-            if st.button("Continue as guest", width="stretch"):
+            # RESTORED GUEST MODE 
+            if st.button("Continue as guest", use_container_width=True):
                 st.session_state["auth_mode"] = "Continue as guest"
                 st.rerun()
         return
 
+    # Handle Login [cite: 3362, 5048]
     if mode == "Log in":
-        if st.button("Back"):
+        if st.button("← Back"):
             st.session_state["auth_mode"] = None
             st.rerun()
         username = st.text_input("Username", key="login_username")
         password = st.text_input("Password", type="password", key="login_password")
         if st.button("Log in", type="primary"):
-            if not username.strip() or not password:
-                st.error("Please enter both username and password.")
-                return
-            if not login_with_credentials(username, password):
-                st.error("Invalid username or password.")
-                return
-            st.success("Welcome back!")
-            st.rerun()
+            if login_with_credentials(username, password):
+                st.rerun()
+            else:
+                st.error("Invalid credentials.")
         return
 
-    if st.button("Back"):
+    # Sign up / Guest setup [cite: 3368, 5050]
+    if st.button("← Back"):
         st.session_state["auth_mode"] = None
         st.rerun()
 
@@ -121,170 +118,96 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         name = username.strip()
     else:
         st.caption("Guest mode: no account required. Your session is temporary.")
-        username = ""
-        password = ""
-        confirm_password = ""
+        username, password, confirm_password = "", "", ""
         name = st.text_input("Your name", placeholder="Enter your display name")
 
-    st.write("")
+    st.write("### Choose your profile picture")
+    if "selected_avatar" not in st.session_state:
+        st.session_state["selected_avatar"] = AVATARS[0]
 
-    # -- Topic & concept tag selection (unified) --
-    concept_embeddings = index.concept_embeddings or {}
-    st.write("**Pick topics and themes you're interested in:**")
-    if index.concept_embeddings is None:
-        st.caption(
-            "Run `python scripts/build_concept_embeddings.py` to unlock "
-            "more themes."
-        )
-    selected_topic_labels, selected_concepts = unified_tag_selector(
-        index.category_centroids, concept_embeddings,
-    )
+    cols = st.columns(6)
+    avatar_dir = Path(".streamlit\\static\\avatars")
+    
+    for i, avatar_file in enumerate(AVATARS):
+        with cols[i]:
+            # BINARY READ FIX: This ensures local images show up 
+            img_path = avatar_dir / avatar_file
+            if img_path.exists():
+                with open(img_path, "rb") as f:
+                    st.image(f.read(), use_container_width=True)
+            else:
+                st.error("Missing image")
+            
+            if st.button("Select", key=f"sel_{avatar_file}"):
+                st.session_state["selected_avatar"] = avatar_file
+                st.rerun()
 
-    st.write("")
+    st.caption(f"Currently selected: {st.session_state['selected_avatar']}")
 
-    # -- Free-text interests --
+    if st.button("Next: Research Interests", type="primary", use_container_width=True):
+        if not is_guest and (not username or len(password) < 8 or password != confirm_password):
+            st.error("Please verify your account details.")
+        elif is_guest and not name:
+            st.error("Please enter a name.")
+        else:
+            st.session_state["temp_creds"] = {
+                "username": username, "password": password, "display_name": name,
+                "profile_pic": st.session_state["selected_avatar"], "is_guest": is_guest
+            }
+            st.session_state["onboarding_step"] = 2
+            st.rerun()
+
+def render_step_two(index: PaperIndex, db_path: str) -> None:
+    """Step 2: Research Interest selection."""
+    st.title("What are you researching?")
+    if st.button("← Back to Account Details"):
+        st.session_state["onboarding_step"] = 1
+        st.rerun()
+    
+    # Tag and Interest selection [cite: 3369, 5052]
+    topic_labels, concept_keys = unified_tag_selector(index.category_centroids, index.concept_embeddings or {})
     free_texts = free_text_input()
+    scholar_url = st.text_input("Google Scholar URL (optional)", placeholder="https://scholar.google.com/...")
+    diversity = st.slider("Exploration range", 0.0, 1.0, 0.5, 0.1)
 
-    st.write("")
-
-    # -- Optional Scholar profile --
-    st.write("**Paste your Google Scholar profile URL** (optional)")
-    scholar_url = st.text_input(
-        "Google Scholar URL",
-        placeholder="https://scholar.google.com/citations?user=...",
-        label_visibility="collapsed",
-    )
-
-    st.write("")
-
-    # -- Diversity slider --
-    st.write("**Exploration range**")
-    st.caption(
-        "Lower values surface papers closest to your core interests. "
-        "Higher values mix in papers from neighboring fields for serendipity."
-    )
-    diversity = st.slider(
-        "Exploration range",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.5,
-        step=0.1,
-        format="%.1f",
-        label_visibility="collapsed",
-    )
-
-    if st.button("Start reading", type="primary"):
-        if not is_guest:
-            if not username.strip():
-                st.error("Please choose a username.")
-                return
-            if len(password) < 8:
-                st.error("Password must be at least 8 characters.")
-                return
-            if password != confirm_password:
-                st.error("Passwords do not match.")
-                return
-        if not is_guest and not username.strip():
-            st.error("Please choose a username.")
-            return
-        if is_guest and not name.strip():
-            st.error("Please enter your name.")
-            return
-        if len(selected_topic_labels) + len(selected_concepts) > MAX_ONBOARDING_TAGS:
-            st.error(f"Please choose at most {MAX_ONBOARDING_TAGS} tags.")
-            return
-        if (
-            not selected_topic_labels
-            and not selected_concepts
-            and not free_texts
-            and not scholar_url.strip()
-        ):
-            st.error(
-                "Please provide at least one category, theme, free-text "
-                "interest, or Scholar profile."
-            )
-            return
-
-        # -- Assemble seed signals --
+    if st.button("Start reading", type="primary", use_container_width=True):
+        creds = st.session_state["temp_creds"]
         seeds: list[SeedSignal] = []
 
-        # arXiv categories expanded from human-readable onboarding topics.
+        # Build seeds from selections [cite: 3376, 5036]
         try:
-            seeds.extend(
-                make_category_seeds_from_topic_labels(
-                    selected_topic_labels,
-                    index.category_centroids,
-                )
-            )
-        except ValueError as exc:
-            st.error(str(exc))
-            return
-
-        # Concept tags
-        for key in selected_concepts:
-            tag = CONCEPT_TAG_MAP[key]
-            seeds.append(
-                make_concept_seed(
-                    key,
-                    tag.label,
-                    concept_embeddings[key],
-                )
-            )
-
-        # Free-text interests
-        if free_texts:
-            with loading_spinner_with_message():
-                model = _get_embed_model()
-                for phrase, emb in embed_free_text_interests(free_texts, model):
-                    seeds.append(make_freetext_seed(phrase, emb))
-
-        # Scholar papers
-        papers = None
-        if scholar_url.strip():
-            with loading_spinner_with_message():
-                papers = load_scholar_papers(scholar_url.strip())
-            if papers:
+            seeds.extend(make_category_seeds_from_topic_labels(topic_labels, index.category_centroids))
+            for key in concept_keys:
+                tag = CONCEPT_TAG_MAP[key]
+                seeds.append(make_concept_seed(key, tag.label, index.concept_embeddings[key]))
+            
+            if free_texts:
                 with loading_spinner_with_message():
                     model = _get_embed_model()
-                    paper_embeddings = model.embed_papers(papers)
-                    for i, paper in enumerate(papers):
-                        seeds.append(make_scholar_seed(paper["title"], paper_embeddings[i]))
-            else:
-                st.warning("Could not load Scholar profile. "
-                           "Continuing with other signals.")
+                    for phrase, emb in embed_free_text_interests(free_texts, model):
+                        seeds.append(make_freetext_seed(phrase, emb))
+            
+            if not seeds:
+                st.error("Please select at least one research interest.")
+                return
 
-        # -- Initialize profile --
-        if not seeds:
-            st.error(
-                "Could not build any usable profile seeds. Please add another "
-                "interest signal."
-            )
-            return
-
-        result = init_user_profile_v2(seeds)
-        centroids = result.centroids
-        k_u = centroids.shape[0]
-        try:
+            # Initialize profile [cite: 3383, 5061]
+            result = init_user_profile_v2(seeds)
             user_id = create_user(
-                (username.strip() if not is_guest else name.strip()),
-                centroids,
-                k_u,
-                diversity,
+                display_name=creds["display_name"],
+                centroids=result.centroids,
+                k_u=result.centroids.shape[0],
+                diversity=diversity,
                 thread_weights=result.thread_weights,
                 thread_labels=result.thread_labels,
-                username=username.strip() if not is_guest else None,
-                password=password if not is_guest else None,
+                username=creds["username"] if not creds["is_guest"] else None,
+                password=creds["password"] if not creds["is_guest"] else None,
+                profile_pic=creds["profile_pic"] 
             )
-        except ValueError as exc:
-            st.error(str(exc))
-            return
+            
+            # Finalize session [cite: 3385, 5117]
+            st.session_state.update({"user_id": user_id, "user_centroids": result.centroids, "onboarded": True})
+            st.rerun()
 
-        st.session_state["user_id"] = user_id
-        st.session_state["user_centroids"] = centroids
-        st.session_state["user_k_u"] = k_u
-        st.session_state["user_diversity"] = diversity
-        st.session_state["thread_labels"] = result.thread_labels
-        st.session_state["thread_weights"] = result.thread_weights
-        st.session_state["seed_thread_labels"] = result.seed_labels
-        st.session_state["onboarded"] = True
-        st.rerun()
+        except Exception as e:
+            st.error(f"Setup error: {e}")
