@@ -168,3 +168,28 @@ To clear local user/test data and recreate an empty DB schema:
 ```bash
 python scripts/reset_db.py
 ```
+
+### Evaluation figures
+
+Generate presentation-ready evaluation tables and plots from JSON artifacts:
+
+```bash
+python scripts/plot_evaluation_results.py \
+  --query-aggregate evaluation/data/query_aggregate_metrics_combined_ev1_ev120.json \
+  --out-dir reports/eval_figures
+```
+
+For full query evaluation figures, also provide `--query-scores` for the
+relevance-by-rank curve and `--query-baseline-comparison` for baseline
+comparison plots. Later daily-feed experiments can add
+`--daily-variant-metrics` and `--diversity-sweep`.
+
+Query-only aggregate runs produce:
+
+- `headline_metrics_table.csv`
+- `headline_metrics_table.png`
+- `query_search_case_metrics.png`
+
+Additional inputs produce optional files such as
+`query_relevance_by_rank.csv/png`, query baseline comparison PNGs,
+`daily_feed_variant_comparison.png`, and `diversity_index_sweep.png`.
