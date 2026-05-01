@@ -233,7 +233,15 @@ def make_user_cluster_plot(
                     y=centroids[:, 1],
                     mode="markers",
                     name="user centroids",
-                    marker=dict(symbol="star", size=15, color="#111827", line=dict(width=1, color="white")),
+                    marker=dict(
+                        symbol="star", 
+                        size=25,           
+                        color="#111827", 
+                        line=dict(
+                            width=3,   
+                            color="white"
+                        )
+                    ),
                     hovertemplate="user centroid<extra></extra>",
                 )
             )
