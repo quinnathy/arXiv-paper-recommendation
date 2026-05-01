@@ -140,6 +140,7 @@ else:
 
         if st.button("Log out", width="stretch"):
             logout_user()
+            st.session_state.clear()
             st.rerun()
 
         st.divider()
