@@ -126,7 +126,7 @@ def render_step_one() -> None:
         st.session_state["selected_avatar"] = AVATARS[0]
 
     cols = st.columns(6)
-    avatar_dir = Path(".streamlit\\static\\avatars")
+    avatar_dir = Path(".streamlit/static/avatars")
     
     for i, avatar_file in enumerate(AVATARS):
         with cols[i]:
@@ -206,7 +206,7 @@ def render_step_two(index: PaperIndex, db_path: str) -> None:
             )
             
             # Finalize session [cite: 3385, 5117]
-            st.session_state.update({"user_id": user_id, "user_centroids": result.centroids, "onboarded": True})
+            st.session_state.update({"user_id": user_id, "user_centroids": result.centroids, "user_diversity": diversity, "onboarded": True})
             st.rerun()
 
         except Exception as e:
