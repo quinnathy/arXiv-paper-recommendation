@@ -256,6 +256,14 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
 
     st.title(f"{greeting}, {user['display_name']}")
 
+    try:
+        centroids = st.session_state.get("user_centroids")
+        joke = select_domain_joke(centroids, st.session_state["user_id"])
+        if joke:
+            st.caption(joke["joke"])
+    except Exception:
+        pass
+
     if "todays_recs" not in st.session_state:
         centroids = st.session_state["user_centroids"]
 
