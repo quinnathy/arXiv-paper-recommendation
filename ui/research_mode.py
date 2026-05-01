@@ -16,6 +16,30 @@ except ImportError:
 
 from user.db import get_all_notes, save_research_note
 from ui.components import loading_spinner_with_message
+from datetime import datetime
+
+st.markdown(
+    """
+    <style>
+    div[data-testid="stAppViewContainer"] {
+        padding-top: 0rem !important;
+    }
+
+    section[data-testid="stMainBlockContainer"] {
+        padding-top: 0.75rem !important;
+    }
+
+    div.block-container {
+        padding-top: 0.75rem !important;
+    }
+
+    h1:first-child {
+        margin-top: 0rem !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 def render_research_mode(index=None):
     if fitz is None:
@@ -81,7 +105,7 @@ def render_research_mode(index=None):
             st.info("Drag to select area. Click button to Snag.")
             cropped_img = st_cropper(img, realtime_update=True, box_color='#FF0000', aspect_ratio=None)
             
-            if st.button("✨ SNAG TO WALL", width="stretch"):
+            if st.button("Add to Wall", width="stretch"):
                 buffered = io.BytesIO()
                 cropped_img.save(buffered, format="PNG")
                 img_str = base64.b64encode(buffered.getvalue()).decode()
@@ -126,3 +150,48 @@ def render_research_mode(index=None):
                 st.markdown(content, unsafe_allow_html=True)
                 # Replace st.divider() with this for a tight, 5px margin
                 st.markdown("<hr style='margin-top:0; margin-bottom: 5px; border: 0.5px solid #eee;'>", unsafe_allow_html=True)
+
+        notes = get_all_notes(user_id)
+
+        st.markdown("---")
+
+        if notes:
+            md_content = build_research_export(notes, active_id)
+
+            st.download_button(
+                label="Download as Markdown",
+                data=md_content,
+                file_name=f"research_{active_id}.md",
+                mime="text/markdown"
+            )
+
+            st.download_button(
+                label="Download as TXT",
+                data=md_content,
+                file_name=f"research_{active_id}.txt",
+                mime="text/plain"
+            )
+
+def build_research_export(notes, active_id):
+    md_lines = []
+
+    md_lines.append(f"# Research Lab Notes")
+    md_lines.append(f"Paper: {active_id}")
+    md_lines.append(f"Exported: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    md_lines.append("\n---\n")
+
+    for content, aid, ts in notes:
+        # crude detection: image vs text
+        if "<img" in content:
+            md_lines.append("### Snagged Image\n")
+            md_lines.append(content)
+            md_lines.append("\n")
+        else:
+            # strip simple paragraph wrapper if present
+            cleaned = content.replace("<p>", "").replace("</p>", "")
+            md_lines.append(cleaned)
+            md_lines.append("\n")
+
+        md_lines.append("---\n")
+
+    return "\n".join(md_lines)
