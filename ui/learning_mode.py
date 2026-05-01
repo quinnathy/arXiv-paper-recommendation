@@ -10,13 +10,13 @@ from recommender.concept_map import (
 )
 from recommender.engine import recommend
 from user.db import get_saved_papers, get_seen_ids, log_feedback, update_centroids
-from user.profile import apply_feedback
+from user.profile import apply_feedback, init_user_profile_v2, make_scholar_seed
 from user.session import save_centroids_to_session
 from ui.components import loading_spinner_with_message
 
 
 WORKSPACE_SIMILAR_LIMIT = 5
-WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION = "custom-distance-v1"
+WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION = "barebones-pca-papers-v1"
 
 
 def _init_workspace_state():
@@ -160,36 +160,45 @@ def _paper_index_by_id(index: PaperIndex, arxiv_id: str) -> int | None:
     return None
 
 
-def _workspace_query_vectors(index: PaperIndex, workspace_ids: list[str]):
-    paper_indices = [
-        idx
-        for arxiv_id in workspace_ids
-        if (idx := _paper_index_by_id(index, arxiv_id)) is not None
-    ]
-    if not paper_indices:
-        return None
+def _workspace_onboarding_seeds(index: PaperIndex, workspace_papers: list[dict]):
+    seeds = []
+    for paper in workspace_papers:
+        arxiv_id = paper["arxiv_id"]
+        paper_idx = _paper_index_by_id(index, arxiv_id)
+        if paper_idx is None:
+            continue
 
-    embeddings = index.embeddings[paper_indices].astype("float32")
-    norms = (embeddings * embeddings).sum(axis=1, keepdims=True) ** 0.5
-    norms = norms.clip(min=1e-12)
-    return (embeddings / norms).astype("float32")
+        embedding = index.embeddings[paper_idx].astype("float32")
+        norm = float((embedding * embedding).sum() ** 0.5)
+        if norm <= 1e-12:
+            continue
+
+        title = paper.get("title") or arxiv_id
+        seeds.append(make_scholar_seed(title, embedding / norm))
+
+    return seeds
 
 
 def _find_workspace_similar_papers(index: PaperIndex, workspace_papers: list[dict]):
     workspace_ids = [paper["arxiv_id"] for paper in workspace_papers]
-    query_vectors = _workspace_query_vectors(index, workspace_ids)
-    if query_vectors is None:
+    seeds = _workspace_onboarding_seeds(index, workspace_papers)
+    if not seeds:
         return []
 
+    workspace_profile = init_user_profile_v2(seeds)
     user_id = st.session_state["user_id"]
-    excluded_ids = get_seen_ids(user_id) | set(workspace_ids)
-    return recommend(
-        query_vectors,
+    shown_ids = set(st.session_state.get("shown_ids") or set())
+    excluded_ids = get_seen_ids(user_id) | shown_ids | set(workspace_ids)
+    recs = recommend(
+        workspace_profile.centroids,
         excluded_ids,
         index,
         diversity=st.session_state.get("user_diversity", 0.5),
         n=WORKSPACE_SIMILAR_LIMIT,
     )
+    shown_ids.update(paper["id"] for paper in recs if paper.get("id"))
+    st.session_state["shown_ids"] = shown_ids
+    return recs
 
 
 def _handle_workspace_suggestion_add(arxiv_id: str, index: PaperIndex) -> None:
@@ -219,7 +228,7 @@ def _render_workspace_suggestion(
 
         score = paper.get("raw_similarity", paper.get("rec_score"))
         if score is not None:
-            st.caption(f"Similarity to closest workspace paper: {float(score):.3f}")
+            st.caption(f"Workspace recommendation score: {float(score):.3f}")
 
         cols = st.columns(3)
         with cols[0]:
@@ -283,12 +292,6 @@ def _load_workspace_similar_papers(
     workspace_papers: list[dict],
 ) -> None:
     signature = _workspace_signature(workspace_papers)
-    if (
-        "workspace_similar_papers" in st.session_state
-        and st.session_state.get("workspace_similar_signature") == signature
-    ):
-        return
-
     st.session_state.pop("workspace_similar_papers", None)
     st.session_state.pop("workspace_similar_signature", None)
     with loading_spinner_with_message():
@@ -302,16 +305,10 @@ def _load_workspace_similar_papers(
 def _load_workspace_concept_map(
     index: PaperIndex,
     workspace_papers: list[dict],
-    paper_similarity_threshold: float = 0.35,
-    concept_similarity_threshold: float = 0.35,
 ) -> None:
     workspace_ids = [paper["arxiv_id"] for paper in workspace_papers]
     signature = _workspace_signature(workspace_papers)
-    params = (
-        paper_similarity_threshold,
-        concept_similarity_threshold,
-        WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION,
-    )
+    params = (WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION,)
     if (
         st.session_state.get("workspace_concept_map")
         and st.session_state.get("workspace_concept_map_signature") == signature
@@ -326,8 +323,6 @@ def _load_workspace_concept_map(
         st.session_state["workspace_concept_map"] = build_workspace_concept_map(
             index,
             workspace_ids,
-            paper_similarity_threshold=paper_similarity_threshold,
-            concept_similarity_threshold=concept_similarity_threshold,
         )
         st.session_state["workspace_concept_map_signature"] = signature
         st.session_state["workspace_concept_map_params"] = params
@@ -337,29 +332,12 @@ def _render_map_summary(graph: dict) -> None:
     summary = graph.get("summary", {})
     counts = graph.get("counts", {})
 
-    cols = st.columns(3)
+    cols = st.columns(2)
     with cols[0]:
-        avg = summary.get("average_similarity")
-        st.metric("Avg Score", f"{avg:.2f}" if avg is not None else "n/a")
+        st.metric("Papers", counts.get("papers", 0))
     with cols[1]:
-        st.metric("Themes", summary.get("theme_count", 0))
-    with cols[2]:
-        st.metric("Concepts", counts.get("concepts", 0))
+        st.metric("Edges", len(graph.get("edges", [])))
 
-    theme_labels = summary.get("theme_labels", [])
-    if theme_labels:
-        st.caption("Themes: " + ", ".join(theme_labels))
-
-    closest = summary.get("closest_pair")
-    if closest:
-        st.caption(
-            "Closest pair: "
-            f"{closest['source']} + {closest['target']} "
-            f"({closest['similarity']:.2f})"
-        )
-    isolated = summary.get("most_isolated")
-    if isolated:
-        st.caption(f"Most isolated paper: {isolated}")
     position_source = summary.get("position_source")
     if position_source:
         st.caption(f"Paper positions: {position_source}.")
@@ -395,29 +373,10 @@ def _render_workspace_result_panel(
 
     if active_view == "visualization":
         st.subheader("Visualization")
-        with st.expander("Map Controls", expanded=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.slider(
-                    "Paper link threshold",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=st.session_state.get("workspace_map_paper_threshold", 0.35),
-                    step=0.05,
-                    key="workspace_map_paper_threshold",
-                    help="Only draw paper-paper links above this custom connection score.",
-                )
-            with c2:
-                st.slider(
-                    "Concept link threshold",
-                    min_value=0.0,
-                    max_value=1.0,
-                    value=st.session_state.get("workspace_map_concept_threshold", 0.35),
-                    step=0.05,
-                    key="workspace_map_concept_threshold",
-                    help="Only draw concept links above this embedding similarity.",
-                    disabled=not bool(getattr(index, "concept_embeddings", None)),
-                )
+        _load_workspace_concept_map(
+            index,
+            workspace_papers,
+        )
         graph = st.session_state.get("workspace_concept_map")
         if not graph or not graph.get("nodes"):
             st.info("Add papers to the workspace to build a concept map.")
@@ -434,9 +393,8 @@ def _render_workspace_result_panel(
         counts = graph.get("counts", {})
         st.caption(
             "Nodes: "
-            f"{counts.get('papers', 0)} papers, "
-            f"{counts.get('concepts', 0)} concept anchors. "
-            "Paper edges are weighted by a custom connection score."
+            f"{counts.get('papers', 0)} papers. "
+            "Paper positions use the PCA embedding map."
         )
 
 
@@ -538,18 +496,7 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                 disabled=not workspace_papers or summary_running,
                 type="primary",
             ):
-                _load_workspace_concept_map(
-                    index,
-                    workspace_papers,
-                    paper_similarity_threshold=st.session_state.get(
-                        "workspace_map_paper_threshold",
-                        0.35,
-                    ),
-                    concept_similarity_threshold=st.session_state.get(
-                        "workspace_map_concept_threshold",
-                        0.35,
-                    ),
-                )
+                _load_workspace_concept_map(index, workspace_papers)
                 st.session_state["workspace_result_view"] = "visualization"
 
     if summary_running:

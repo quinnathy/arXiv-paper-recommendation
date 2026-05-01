@@ -118,7 +118,8 @@ else:
         user_data = get_user(user_id)
 
         # Profile Image and Name
-        st.image("https://www.gravatar.com/avatar/0000?d=mp&f=y", width=60)
+        avatar_file = user_data.get("profile_pic", "default_avatar.jpg")
+        st.image(f".streamlit\\static\\avatars\\{avatar_file}", width=80)
         st.markdown(f"**{user_data['display_name']}**")
 
         if st.button(

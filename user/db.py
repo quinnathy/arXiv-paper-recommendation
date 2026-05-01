@@ -49,6 +49,7 @@ def init_db(db_path: str = DB_PATH) -> None:
             display_name   TEXT NOT NULL,
             username       TEXT,
             password_hash  TEXT,
+            profile_pic   TEXT,
             centroids      BLOB NOT NULL,
             k_u            INTEGER NOT NULL DEFAULT 1,
             diversity      REAL NOT NULL DEFAULT 0.5,
@@ -58,6 +59,10 @@ def init_db(db_path: str = DB_PATH) -> None:
             thread_labels  TEXT DEFAULT NULL
         )
     """)
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN profile_pic TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS feedback (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,7 +91,7 @@ def init_db(db_path: str = DB_PATH) -> None:
             conn.execute(f"ALTER TABLE users ADD COLUMN {col}")
         except sqlite3.OperationalError:
             pass  # column already exists
-
+    
     # for research
     conn.execute("""
         CREATE TABLE IF NOT EXISTS research_notes (
@@ -137,22 +142,8 @@ def create_user(
     thread_labels: list[str] | None = None,
     username: str | None = None,
     password: str | None = None,
+    profile_pic: str | None = None,  # Ensure this is the 9th argument here
 ) -> str:
-    """Create a new user record in the database.
-
-    Args:
-        display_name: The user's display name.
-        centroids: The user's initial centroids, shape (k_u, 768), float32, unit-norm rows.
-        k_u: Number of research threads (1–3).
-        diversity: The diversity slider value, 0.0–1.0.
-        thread_weights: Optional (k_u,) float32 array of per-thread importance.
-        thread_labels: Optional list of k_u human-readable thread names.
-        username: Optional account username for returning-user login.
-        password: Optional plaintext password (stored as PBKDF2 hash).
-
-    Returns:
-        The generated user_id (UUID string).
-    """
     user_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     blob = centroids.astype(np.float32).tobytes()
@@ -162,31 +153,24 @@ def create_user(
     password_hash = _hash_password(password) if password else None
 
     conn = _connect()
-    if normalized_username:
-        exists = conn.execute(
-            "SELECT 1 FROM users WHERE username = ?",
-            (normalized_username,),
-        ).fetchone()
-        if exists is not None:
-            conn.close()
-            raise ValueError("Username already exists.")
-
+    
     conn.execute(
         "INSERT INTO users (user_id, display_name, username, password_hash, centroids, "
-        "k_u, diversity, created_at, last_active, thread_weights, thread_labels) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "k_u, diversity, created_at, last_active, thread_weights, thread_labels, profile_pic) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", # 12 placeholders
         (
-            user_id,
-            display_name,
-            normalized_username,
-            password_hash,
-            blob,
-            k_u,
-            diversity,
-            now,
-            now,
-            tw_blob,
-            tl_json,
+            user_id,            # 1
+            display_name,       # 2
+            normalized_username,# 3
+            password_hash,      # 4
+            blob,               # 5
+            k_u,                # 6
+            diversity,          # 7
+            now,                # 8
+            now,                # 9
+            tw_blob,            # 10
+            tl_json,            # 11
+            profile_pic         # 12
         ),
     )
     conn.commit()
