@@ -20,7 +20,6 @@ import numpy as np
 import pytest
 
 from pipeline.concept_tags import (
-    BROAD_CONCEPT_KEYS,
     CONCEPT_TAG_MAP,
     load_concept_embedding_artifacts,
 )
@@ -330,7 +329,6 @@ def build_onboarding_seeds(
                     tag.key,
                     concept.label,
                     concept_embeddings[tag.key],
-                    broad=tag.key in BROAD_CONCEPT_KEYS,
                 )
             )
         else:
@@ -443,7 +441,7 @@ def test_overlapping_ml_interests_form_one_thread():
 
 
 @pytest.mark.diagnostic
-def test_broad_ml_support_attaches_to_specific_free_text_thread():
+def test_ml_category_context_attaches_to_specific_free_text_thread():
     category_centroids, concept_embeddings, pool = _loaded_context()
     tags = [
         _require_tag(pool, ["Machine Learning", "cs.LG"], kind="category"),
@@ -614,7 +612,7 @@ def test_threshold_sweep_on_canonical_onboarding_cases():
             (2, 3),
         ),
         (
-            "broad_plus_specific_bio",
+            "category_context_plus_specific_bio",
             [
                 _require_tag(pool, ["Artificial Intelligence", "cs.AI"], kind="category"),
                 _require_tag(pool, ["Machine Learning", "cs.LG"], kind="category"),

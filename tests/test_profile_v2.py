@@ -74,16 +74,10 @@ class TestSeedFactories:
 
     def test_make_concept_seed_specific(self):
         emb = _random_unit()
-        s = make_concept_seed("healthcare_ai", "Healthcare AI", emb, broad=False)
+        s = make_concept_seed("healthcare_ai", "Healthcare AI", emb)
         assert s.source == "predefined_tag"
         assert s.split_power >= 0.6  # core seed
         assert s.weight == 1.5
-
-    def test_make_concept_seed_broad(self):
-        emb = _random_unit()
-        s = make_concept_seed("ml", "ML", emb, broad=True)
-        assert s.split_power < 0.6  # support
-        assert s.weight == 1.0
 
     def test_make_scholar_seed(self):
         emb = _random_unit()
