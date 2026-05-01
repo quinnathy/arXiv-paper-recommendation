@@ -105,8 +105,8 @@ def render_research_mode(index=None):
     # --- STEP 3: NOTEPAD ---
     with col_notepad:
         st.subheader("Brainstorm")
-        
-        # Frantic Manual Entry
+    
+        # Manual Entry
         with st.form("brainstorm_form", clear_on_submit=True):
             note = st.text_area("Add a thought...", placeholder="Notes, questions, or raw text snippets...", height=100)
             if st.form_submit_button("Append Note", width="stretch"):
@@ -114,11 +114,10 @@ def render_research_mode(index=None):
                     save_research_note(user_id, f"<p>{note}</p>", active_id)
                     st.rerun()
 
-        # Display the wall (Frantic vibe: Everything appears in a long scrollable column)
+        # Display the wall 
         notes = get_all_notes(user_id)
         
         st.markdown("---")
-        # Scrollable container for the 'frantic' feeling
         with st.container(height=600):
             if not notes:
                 st.caption("Wall is empty. Start snagging or typing.")
