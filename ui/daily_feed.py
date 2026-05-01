@@ -50,7 +50,19 @@ VIZ_ARTIFACTS = (
 )
 
 
-def _handle_feedback(signal: str, index: PaperIndex, arxiv_id: str):
+def _resolve_user_diversity(fallback: float | None = None) -> float:
+    """Return a usable diversity value and repair missing session state."""
+    value = st.session_state.get("user_diversity")
+    if value is None:
+        value = 0.5 if fallback is None else fallback
+        st.session_state["user_diversity"] = value
+    return float(value)
+
+
+def _handle_feedback(
+    arxiv_id: str, signal: str, index: PaperIndex
+) -> None:
+    """Process a feedback event: log, update centroids, mark responded."""
     user_id = st.session_state["user_id"]
     centroids = st.session_state["user_centroids"]
 
@@ -189,7 +201,7 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
         searched_clusters = find_nearest_clusters(
             user_centroids,
             index.centroids,
-            diversity=st.session_state.get("user_diversity", 0.5),
+            diversity=_resolve_user_diversity(),
         )
 
     id_to_index = {meta["id"]: i for i, meta in enumerate(index.paper_meta)}
@@ -238,7 +250,8 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
 
 
 def render_daily_feed(index: PaperIndex, db_path: str) -> None:
-    user = get_user(st.session_state["user_id"])
+    user_id = st.session_state["user_id"]
+    user = get_user(user_id)
 
     if render_query_search(index):
         return
@@ -258,26 +271,32 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
 
     try:
         centroids = st.session_state.get("user_centroids")
-        joke = select_domain_joke(centroids, st.session_state["user_id"])
+        joke = select_domain_joke(centroids, user_id)
         if joke:
             st.caption(joke["joke"])
     except Exception:
         pass
 
+    if "shown_ids" not in st.session_state:
+        st.session_state["shown_ids"] = set()
+
     if "todays_recs" not in st.session_state:
         centroids = st.session_state["user_centroids"]
-
+        diversity = _resolve_user_diversity(user.get("diversity"))
+        seen_ids = get_seen_ids(user_id)
+        excluded_ids = seen_ids | st.session_state["shown_ids"]
         with loading_spinner_with_message():
             recs = recommend(
                 centroids,
-                get_seen_ids(st.session_state["user_id"]),
+                excluded_ids,
                 index,
-                diversity=st.session_state["user_diversity"],
+                diversity=diversity,
                 n=DAILY_FEED_SIZE,
             )
 
         st.session_state["todays_recs"] = recs
-        mark_papers_seen(st.session_state["user_id"], [r["id"] for r in recs])
+        mark_papers_seen(user_id, [r["id"] for r in recs])
+        st.session_state["shown_ids"].update(r["id"] for r in recs)
 
     recs = st.session_state["todays_recs"]
 
@@ -290,9 +309,9 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
 
         paper_card(
             meta,
-            on_like=partial(_handle_feedback, "like", index),
-            on_save=partial(_handle_feedback, "save", index),
-            on_skip=partial(_handle_feedback, "skip", index),
+            on_like=partial(_handle_feedback, signal="like", index=index),
+            on_save=partial(_handle_feedback, signal="save", index=index),
+            on_skip=partial(_handle_feedback, signal="skip", index=index),
             liked=arxiv_id in liked,
             saved=arxiv_id in saved,
             skipped=arxiv_id in skipped,

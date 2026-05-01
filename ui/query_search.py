@@ -106,7 +106,7 @@ def render_query_search(index: PaperIndex) -> bool:
     st.markdown("**Search papers by topic, method, dataset, or research question...**")
 
     query = st.text_input(
-        "",
+        "Search papers",
         key="query_search_input",
         placeholder="Try: diffusion models for medical imaging",
         label_visibility="collapsed",

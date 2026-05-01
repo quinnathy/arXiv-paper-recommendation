@@ -2,7 +2,14 @@
 
 import streamlit as st
 
+from ai.workspace_cache import (
+    read_workspace_summary_cache,
+    write_workspace_connections_cache,
+    write_workspace_summary_cache,
+)
+from ai.workspace_connections import generate_workspace_connections
 from ai.workspace_summary import summarize_workspace
+from ai.workspace_summary import resolve_summary_model
 from pipeline.index import PaperIndex
 from recommender.concept_map import (
     build_workspace_concept_map,
@@ -16,7 +23,7 @@ from ui.components import loading_spinner_with_message
 
 
 WORKSPACE_SIMILAR_LIMIT = 5
-WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION = "barebones-pca-papers-v1"
+WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION = "pca-ai-connections-v1"
 
 
 def _init_workspace_state():
@@ -59,6 +66,9 @@ def _clear_workspace_outputs() -> None:
         "workspace_concept_map",
         "workspace_concept_map_signature",
         "workspace_concept_map_params",
+        "workspace_connections",
+        "workspace_connections_signature",
+        "workspace_connections_source",
         "workspace_pending_action",
         "workspace_result_view",
     ):
@@ -201,8 +211,14 @@ def _find_workspace_similar_papers(index: PaperIndex, workspace_papers: list[dic
     return recs
 
 
+def _handle_workspace_suggestion_save(arxiv_id: str, index: PaperIndex) -> None:
+    _save_paper_to_folders(arxiv_id, index)
+    st.rerun()
+
+
 def _handle_workspace_suggestion_add(arxiv_id: str, index: PaperIndex) -> None:
     _save_paper_to_folders(arxiv_id, index)
+    _add_to_workspace(arxiv_id)
     st.rerun()
 
 
@@ -213,6 +229,7 @@ def _render_workspace_suggestion(
 ) -> None:
     arxiv_id = paper["id"]
     is_saved = arxiv_id in saved_ids
+    is_in_workspace = arxiv_id in st.session_state.get("learning_workspace", [])
 
     with st.container(border=True):
         title = " ".join(paper.get("title", arxiv_id).split())
@@ -233,19 +250,20 @@ def _render_workspace_suggestion(
         cols = st.columns(3)
         with cols[0]:
             if st.button(
-                "Saved" if is_saved else "Add",
+                "Added" if is_in_workspace else "Add",
                 key=f"workspace_similar_add_{arxiv_id}",
                 width="stretch",
-                disabled=is_saved,
+                disabled=is_in_workspace,
             ):
                 _handle_workspace_suggestion_add(arxiv_id, index)
         with cols[1]:
             if st.button(
-                "Research",
-                key=f"workspace_similar_research_{arxiv_id}",
+                "Saved" if is_saved else "Save",
+                key=f"workspace_similar_save_{arxiv_id}",
                 width="stretch",
+                disabled=is_saved,
             ):
-                _open_in_research_mode(arxiv_id, index, save_to_folders=True)
+                _handle_workspace_suggestion_save(arxiv_id, index)
         with cols[2]:
             st.link_button(
                 "PDF",
@@ -261,6 +279,14 @@ def _get_openai_api_key() -> str | None:
         return None
 
 
+def _workspace_summary_ready(workspace_papers: list[dict]) -> bool:
+    return bool(
+        st.session_state.get("workspace_summary")
+        and st.session_state.get("workspace_summary_signature")
+        == _workspace_signature(workspace_papers)
+    )
+
+
 def _load_workspace_summary(workspace_papers: list[dict]) -> None:
     signature = _workspace_signature(workspace_papers)
     if (
@@ -274,11 +300,20 @@ def _load_workspace_summary(workspace_papers: list[dict]) -> None:
     st.session_state.pop("workspace_summary_signature", None)
     try:
         with loading_spinner_with_message():
-            st.session_state["workspace_summary"] = summarize_workspace(
+            summary = summarize_workspace(
                 workspace_papers,
                 api_key=api_key,
             )
+            st.session_state["workspace_summary"] = summary
             st.session_state["workspace_summary_signature"] = signature
+            try:
+                write_workspace_summary_cache(
+                    workspace_papers,
+                    summary,
+                    model=resolve_summary_model(),
+                )
+            except Exception as cache_exc:
+                st.warning(f"Could not write workspace summary cache: {cache_exc}")
     except ValueError as exc:
         st.warning(
             f"{exc} Add OPENAI_API_KEY to your environment or .streamlit/secrets.toml."
@@ -308,7 +343,10 @@ def _load_workspace_concept_map(
 ) -> None:
     workspace_ids = [paper["arxiv_id"] for paper in workspace_papers]
     signature = _workspace_signature(workspace_papers)
-    params = (WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION,)
+    params = (
+        WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION,
+        st.session_state.get("workspace_connections_signature"),
+    )
     if (
         st.session_state.get("workspace_concept_map")
         and st.session_state.get("workspace_concept_map_signature") == signature
@@ -320,12 +358,69 @@ def _load_workspace_concept_map(
     st.session_state.pop("workspace_concept_map_signature", None)
     st.session_state.pop("workspace_concept_map_params", None)
     with loading_spinner_with_message():
+        connections, connection_source = _load_workspace_connections(workspace_papers)
         st.session_state["workspace_concept_map"] = build_workspace_concept_map(
             index,
             workspace_ids,
+            connections=connections,
         )
+        st.session_state["workspace_concept_map"]["summary"][
+            "connections_source"
+        ] = connection_source
         st.session_state["workspace_concept_map_signature"] = signature
-        st.session_state["workspace_concept_map_params"] = params
+        st.session_state["workspace_concept_map_params"] = (
+            WORKSPACE_CONCEPT_MAP_LAYOUT_VERSION,
+            st.session_state.get("workspace_connections_signature"),
+        )
+
+
+def _load_workspace_connections(
+    workspace_papers: list[dict],
+) -> tuple[list[dict], str | None]:
+    signature = _workspace_signature(workspace_papers)
+    if (
+        st.session_state.get("workspace_connections") is not None
+        and st.session_state.get("workspace_connections_signature") == signature
+    ):
+        return (
+            st.session_state.get("workspace_connections", []),
+            st.session_state.get("workspace_connections_source"),
+        )
+
+    summary_text = read_workspace_summary_cache(workspace_papers)
+    abstract_only = False
+    source = "summary"
+    if summary_text is None:
+        if _workspace_summary_ready(workspace_papers):
+            abstract_only = True
+            source = "abstracts"
+        else:
+            return [], None
+
+    try:
+        connections = generate_workspace_connections(
+            workspace_papers,
+            summary_text,
+            api_key=_get_openai_api_key(),
+            abstract_only=abstract_only,
+        )
+    except ValueError as exc:
+        st.warning(
+            f"{exc} Add OPENAI_API_KEY to your environment or .streamlit/secrets.toml."
+        )
+        connections = []
+    except Exception as exc:
+        st.warning(f"Could not generate workspace connections: {exc}")
+        connections = []
+
+    st.session_state["workspace_connections"] = connections
+    st.session_state["workspace_connections_signature"] = signature
+    st.session_state["workspace_connections_source"] = source
+    try:
+        write_workspace_connections_cache(workspace_papers, connections)
+    except Exception:
+        pass
+    return connections, source
 
 
 def _render_map_summary(graph: dict) -> None:
@@ -336,11 +431,21 @@ def _render_map_summary(graph: dict) -> None:
     with cols[0]:
         st.metric("Papers", counts.get("papers", 0))
     with cols[1]:
-        st.metric("Edges", len(graph.get("edges", [])))
+        st.metric("Notable Connections", counts.get("connections", 0))
 
-    position_source = summary.get("position_source")
-    if position_source:
-        st.caption(f"Paper positions: {position_source}.")
+    if summary.get("connections_source") == "abstracts":
+        st.caption("[ran on only abstracts]")
+
+
+def _render_paper_node_key(graph: dict) -> None:
+    paper_nodes = [node for node in graph.get("nodes", []) if node.get("type") == "paper"]
+    if not paper_nodes:
+        return
+    key_text = "\n\n".join(
+        f"**{node.get('label', '?')}** - {node.get('title', node.get('key', 'Paper'))}"
+        for node in paper_nodes
+    )
+    st.markdown(key_text)
 
 
 def _render_workspace_result_panel(
@@ -372,7 +477,10 @@ def _render_workspace_result_panel(
         return
 
     if active_view == "visualization":
-        st.subheader("Visualization")
+        st.subheader("Visualize")
+        if not _workspace_summary_ready(workspace_papers):
+            st.info("Run Summarize before opening the visualization.")
+            return
         _load_workspace_concept_map(
             index,
             workspace_papers,
@@ -383,6 +491,7 @@ def _render_workspace_result_panel(
             return
 
         _render_map_summary(graph)
+        _render_paper_node_key(graph)
         try:
             fig = make_workspace_concept_map_figure(graph)
             st.plotly_chart(fig, width="stretch")
@@ -393,8 +502,8 @@ def _render_workspace_result_panel(
         counts = graph.get("counts", {})
         st.caption(
             "Nodes: "
-            f"{counts.get('papers', 0)} papers. "
-            "Paper positions use the PCA embedding map."
+            f"{counts.get('papers', 0)} papers, "
+            f"{counts.get('connections', 0)} AI connections."
         )
 
 
@@ -463,7 +572,9 @@ def _render_workspace(index: PaperIndex, paper_lookup):
 
     st.divider()
 
-    summary_running = st.session_state.get("workspace_pending_action") == "summary"
+    pending_action = st.session_state.get("workspace_pending_action")
+    action_running = pending_action in {"see_more", "summary", "visualization"}
+    summary_ready = _workspace_summary_ready(workspace_papers)
 
     with st.container(key="workspace_action_bar"):
         action_cols = st.columns(3)
@@ -472,17 +583,18 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                 "See More",
                 key="workspace_see_more",
                 width="stretch",
-                disabled=not workspace_papers or summary_running,
+                disabled=not workspace_papers or action_running,
                 type="primary",
             ):
-                _load_workspace_similar_papers(index, workspace_papers)
-                st.session_state["workspace_result_view"] = "similar"
+                st.session_state["workspace_pending_action"] = "see_more"
+                st.session_state.pop("workspace_result_view", None)
+                st.rerun()
         with action_cols[1]:
             if st.button(
                 "Summarize",
                 key="workspace_summarize",
                 width="stretch",
-                disabled=not workspace_papers or summary_running,
+                disabled=not workspace_papers or action_running,
                 type="primary",
             ):
                 st.session_state["workspace_pending_action"] = "summary"
@@ -493,17 +605,35 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                 "Visualization",
                 key="workspace_visualize",
                 width="stretch",
-                disabled=not workspace_papers or summary_running,
+                disabled=not workspace_papers or action_running or not summary_ready,
                 type="primary",
+                help=(
+                    None
+                    if summary_ready
+                    else "Run Summarize before opening the visualization."
+                ),
             ):
-                _load_workspace_concept_map(index, workspace_papers)
-                st.session_state["workspace_result_view"] = "visualization"
+                st.session_state["workspace_pending_action"] = "visualization"
+                st.session_state.pop("workspace_result_view", None)
+                st.rerun()
 
-    if summary_running:
+    if pending_action == "see_more":
+        _load_workspace_similar_papers(index, workspace_papers)
+        st.session_state.pop("workspace_pending_action", None)
+        st.session_state["workspace_result_view"] = "similar"
+        st.rerun()
+
+    if pending_action == "summary":
         _load_workspace_summary(workspace_papers)
         st.session_state.pop("workspace_pending_action", None)
         if st.session_state.get("workspace_summary"):
             st.session_state["workspace_result_view"] = "summary"
+        st.rerun()
+
+    if pending_action == "visualization":
+        _load_workspace_concept_map(index, workspace_papers)
+        st.session_state.pop("workspace_pending_action", None)
+        st.session_state["workspace_result_view"] = "visualization"
         st.rerun()
 
     _render_workspace_result_panel(index, workspace_papers, set(paper_lookup))
