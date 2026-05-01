@@ -512,6 +512,8 @@ def _rolling_joke_markup(jokes: list[str]) -> str:
     display: flex;
     align-items: center;
     gap: 0.65rem;
+    width: min(72rem, calc(100vw - 4rem));
+    max-width: min(72rem, calc(100vw - 4rem));
     min-height: 1.9rem;
     margin: 0.45rem 0;
     color: var(--text-color);
@@ -528,10 +530,13 @@ def _rolling_joke_markup(jokes: list[str]) -> str:
 }}
 .{loader_id} .rjl-copy {{
     display: grid;
+    width: 100%;
     line-height: 1.35;
 }}
 .{loader_id} .rjl-joke {{
     grid-area: 1 / 1;
+    white-space: normal;
+    overflow-wrap: anywhere;
     opacity: 0;
     animation: rjl-fade-{loader_id} {duration}s infinite;
 }}

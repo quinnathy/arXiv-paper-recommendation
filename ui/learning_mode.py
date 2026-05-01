@@ -211,8 +211,14 @@ def _find_workspace_similar_papers(index: PaperIndex, workspace_papers: list[dic
     return recs
 
 
+def _handle_workspace_suggestion_save(arxiv_id: str, index: PaperIndex) -> None:
+    _save_paper_to_folders(arxiv_id, index)
+    st.rerun()
+
+
 def _handle_workspace_suggestion_add(arxiv_id: str, index: PaperIndex) -> None:
     _save_paper_to_folders(arxiv_id, index)
+    _add_to_workspace(arxiv_id)
     st.rerun()
 
 
@@ -223,6 +229,7 @@ def _render_workspace_suggestion(
 ) -> None:
     arxiv_id = paper["id"]
     is_saved = arxiv_id in saved_ids
+    is_in_workspace = arxiv_id in st.session_state.get("learning_workspace", [])
 
     with st.container(border=True):
         title = " ".join(paper.get("title", arxiv_id).split())
@@ -243,19 +250,20 @@ def _render_workspace_suggestion(
         cols = st.columns(3)
         with cols[0]:
             if st.button(
-                "Saved" if is_saved else "Add",
+                "Added" if is_in_workspace else "Add",
                 key=f"workspace_similar_add_{arxiv_id}",
                 width="stretch",
-                disabled=is_saved,
+                disabled=is_in_workspace,
             ):
                 _handle_workspace_suggestion_add(arxiv_id, index)
         with cols[1]:
             if st.button(
-                "Research",
-                key=f"workspace_similar_research_{arxiv_id}",
+                "Saved" if is_saved else "Save",
+                key=f"workspace_similar_save_{arxiv_id}",
                 width="stretch",
+                disabled=is_saved,
             ):
-                _open_in_research_mode(arxiv_id, index, save_to_folders=True)
+                _handle_workspace_suggestion_save(arxiv_id, index)
         with cols[2]:
             st.link_button(
                 "PDF",
@@ -433,7 +441,7 @@ def _render_paper_node_key(graph: dict) -> None:
     paper_nodes = [node for node in graph.get("nodes", []) if node.get("type") == "paper"]
     if not paper_nodes:
         return
-    key_text = "  ".join(
+    key_text = "\n\n".join(
         f"**{node.get('label', '?')}** - {node.get('title', node.get('key', 'Paper'))}"
         for node in paper_nodes
     )
