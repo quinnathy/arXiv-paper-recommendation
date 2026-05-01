@@ -224,71 +224,66 @@ def expand_topic_labels(
 
     return expanded
 
+def on_like(arxiv_id):
+    liked = set(st.session_state.get("liked", set()))
+    liked.add(arxiv_id)
+    st.session_state["liked"] = liked
+    st.rerun()
+
+def on_save(arxiv_id):
+    saved = set(st.session_state.get("saved", set()))
+    saved.add(arxiv_id)
+    st.session_state["saved"] = saved
+    st.rerun()
+
+def on_skip(arxiv_id):
+    skipped = set(st.session_state.get("skipped", set()))
+    skipped.add(arxiv_id)
+    st.session_state["skipped"] = skipped
+    st.rerun()
 
 def paper_card(
     meta: dict,
     on_like: Callable[[str], None],
     on_save: Callable[[str], None],
     on_skip: Callable[[str], None],
+    liked: bool = False,
+    saved: bool = False,
+    skipped: bool = False,
 ) -> None:
-    """Render a single paper as a Streamlit card with action buttons.
+    """Render a single paper card (UI-only, no session logic)."""
 
-    Args:
-        meta: Paper metadata dict with keys: id, title, abstract, categories,
-            update_date, cluster_id, rec_score.
-        on_like: Callback invoked with arxiv_id when Like is clicked.
-        on_save: Callback invoked with arxiv_id when Save is clicked.
-        on_skip: Callback invoked with arxiv_id when Skip is clicked.
-    """
     arxiv_id = meta["id"]
-    responded = st.session_state.get("responded", set())
-    is_responded = arxiv_id in responded
 
     with st.container(border=True):
-        title_text = " ".join(meta["title"].split())
-        st.markdown(
-            f'<h3>{title_text}</h3>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"### {' '.join(meta['title'].split())}")
 
-        # Category badges
         categories = meta.get("categories", [])
         if categories:
-            st.caption(" ".join(f"`{cat}`" for cat in categories))
+            st.caption(" ".join(f"`{c}`" for c in categories))
 
-        # Abstract snippet
         abstract = meta.get("abstract", "")
         if len(abstract) > 300:
-            abstract = abstract[:300] + "..."
+            abstract = abstract[:300].rsplit(" ", 1)[0] + "..."
         st.write(abstract)
 
-        # Links
-        abs_url = f"https://arxiv.org/abs/{arxiv_id}"
-        pdf_url = f"https://arxiv.org/pdf/{arxiv_id}"
-        st.markdown(f"[ArXiv page]({abs_url}) | [PDF]({pdf_url})")
+        st.markdown(
+            f"[ArXiv page](https://arxiv.org/abs/{arxiv_id}) | "
+            f"[PDF](https://arxiv.org/pdf/{arxiv_id})"
+        )
 
-        # Action buttons
         col1, col2, col3 = st.columns(3)
+
         with col1:
-            if st.button(
-                "Like" if not is_responded else "Liked",
-                key=f"like_{arxiv_id}",
-                disabled=is_responded,
-            ):
+            if st.button("Liked" if liked else "Like", key=f"like_{arxiv_id}", disabled=liked):
                 on_like(arxiv_id)
+
         with col2:
-            if st.button(
-                "Save" if not is_responded else "Saved",
-                key=f"save_{arxiv_id}",
-                disabled=is_responded,
-            ):
+            if st.button("Saved" if saved else "Save", key=f"save_{arxiv_id}", disabled=saved):
                 on_save(arxiv_id)
+
         with col3:
-            if st.button(
-                "Skip" if not is_responded else "Skipped",
-                key=f"skip_{arxiv_id}",
-                disabled=is_responded,
-            ):
+            if st.button("Skipped" if skipped else "Skip", key=f"skip_{arxiv_id}", disabled=skipped):
                 on_skip(arxiv_id)
 
 

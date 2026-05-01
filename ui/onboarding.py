@@ -85,7 +85,6 @@ def render_step_one() -> None:
                 st.session_state["auth_mode"] = "Create account"
                 st.rerun()
         with col3:
-            # RESTORED GUEST MODE 
             if st.button("Continue as guest", use_container_width=True):
                 st.session_state["auth_mode"] = "Continue as guest"
                 st.rerun()
@@ -138,11 +137,16 @@ def render_step_one() -> None:
             else:
                 st.error("Missing image")
             
-            if st.button("Select", key=f"sel_{avatar_file}"):
+            is_selected = st.session_state.get("selected_avatar") == avatar_file
+    
+            if st.button(
+                "Selected" if is_selected else "Select", 
+                key=f"sel_{avatar_file}",
+                type="primary" if is_selected else "secondary",
+                use_container_width=True
+            ):
                 st.session_state["selected_avatar"] = avatar_file
                 st.rerun()
-
-    st.caption(f"Currently selected: {st.session_state['selected_avatar']}")
 
     if st.button("Next: Research Interests", type="primary", use_container_width=True):
         if not is_guest and (not username or len(password) < 8 or password != confirm_password):

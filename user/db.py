@@ -202,7 +202,7 @@ def get_user(user_id: str) -> dict | None:
     conn = _connect()
     row = conn.execute(
         "SELECT user_id, display_name, username, centroids, k_u, diversity, "
-        "created_at, last_active, thread_weights, thread_labels "
+        "created_at, last_active, thread_weights, thread_labels, profile_pic "
         "FROM users WHERE user_id = ?",
         (user_id,),
     ).fetchone()
@@ -214,6 +214,7 @@ def get_user(user_id: str) -> dict | None:
     k_u = row[4]
     tw_blob = row[8]
     tl_text = row[9]
+    profile_pic = row[10]   # 👈 NEW
 
     thread_weights = _default_thread_weights(k_u)
     if tw_blob is not None:
@@ -245,6 +246,7 @@ def get_user(user_id: str) -> dict | None:
         "last_active": row[7],
         "thread_weights": thread_weights,
         "thread_labels": thread_labels,
+        "profile_pic": profile_pic,  
     }
 
 
