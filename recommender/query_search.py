@@ -8,6 +8,7 @@ profile centroids acting as a personalization prior.
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from datetime import datetime
 
@@ -26,13 +27,16 @@ CLUSTER_RESULT_CAP = 3
 RECENCY_TIMESCALE_DAYS = 45.0
 
 QUERY_WEIGHT = 0.6
-USER_WEIGHT = 0.3
+USER_WEIGHT = 0.25
 RECENCY_WEIGHT = 0.1
+LEXICAL_WEIGHT = 0.05
 
 QUERY_EXPANSION_TEMPLATE = (
     "Research papers about {query}. Focus on relevant methods, datasets, "
     "benchmarks, applications, theoretical contributions, and recent scientific progress."
 )
+
+_TOKEN_PATTERN = re.compile(r"[a-z0-9][a-z0-9.+#-]*", re.IGNORECASE)
 
 
 def expand_query(query: str, word_threshold: int = 30) -> str:
@@ -70,6 +74,40 @@ def _paper_age_days(update_date: str | None) -> int | None:
     except (TypeError, ValueError):
         return None
     return max((datetime.now() - published).days, 0)
+
+
+def _query_terms(query: str) -> list[str]:
+    """Extract simple lexical terms from the raw user query."""
+    return [term.lower() for term in _TOKEN_PATTERN.findall(query)]
+
+
+def lexical_score(query: str, meta: dict) -> float:
+    """Score exact lexical evidence in title/abstract for short-name queries.
+
+    This is intentionally lightweight rather than BM25. It gives a title match
+    more credit than an abstract match and adds a small phrase-match boost so
+    names like "LoRA" or "SwinIR" can survive dense-embedding ambiguity.
+    """
+    terms = _query_terms(query)
+    if not terms:
+        return 0.0
+
+    title = (meta.get("title") or "").lower()
+    abstract = (meta.get("abstract") or "").lower()
+    raw_query = " ".join(query.strip().lower().split())
+
+    phrase_bonus = 0.0
+    if raw_query and raw_query in title:
+        phrase_bonus = 1.0
+    elif raw_query and raw_query in abstract:
+        phrase_bonus = 0.5
+
+    title_hits = sum(1 for term in terms if term in title)
+    abstract_hits = sum(1 for term in terms if term in abstract)
+    weighted_hits = (2.0 * title_hits) + abstract_hits
+    coverage_score = weighted_hits / (3.0 * len(terms))
+
+    return float(min(1.0, max(phrase_bonus, coverage_score)))
 
 
 def select_query_clusters(
@@ -137,15 +175,15 @@ def search_papers(
     cluster_result_cap: int = CLUSTER_RESULT_CAP,
     time_filter_days: int | None = None,
 ) -> list[dict]:
-    """Search papers using query relevance, user similarity, and recency.
+    """Search papers using query, user, recency, and lexical relevance.
 
     Final score:
-        0.6 * query similarity + 0.3 * user similarity + 0.1 * recency
+        0.6 * query similarity + 0.25 * user similarity
+        + 0.1 * recency + 0.05 * lexical
 
-    The three components are z-score normalized over the candidate pool before
-    the weighted sum is computed. No lexical score is used in this first pass.
+    Components are z-score normalized over the candidate pool before the
+    weighted sum is computed.
     """
-    del query  # Kept in the public signature for diagnostics/future logging.
     seen_ids = seen_ids or set()
     query_embedding = _normalize_vector(query_embedding)
     user_centroids = _normalize_rows(user_centroids)
@@ -200,11 +238,16 @@ def search_papers(
         ],
         dtype=np.float32,
     )
+    lexical_scores = np.array(
+        [lexical_score(query, index.paper_meta[paper_idx]) for paper_idx in pool_indices],
+        dtype=np.float32,
+    )
 
     final_scores = (
         QUERY_WEIGHT * _zscore(pool_query_sims)
         + USER_WEIGHT * _zscore(user_sims)
         + RECENCY_WEIGHT * _zscore(recency_scores)
+        + LEXICAL_WEIGHT * _zscore(lexical_scores)
     )
     ranked_order = np.argsort(final_scores)[::-1]
 
@@ -229,6 +272,7 @@ def search_papers(
         meta["query_similarity"] = float(pool_query_sims[rank_idx])
         meta["user_similarity"] = float(user_sims[rank_idx])
         meta["recency_score"] = float(recency_scores[rank_idx])
+        meta["lexical_score"] = float(lexical_scores[rank_idx])
         meta["nearest_user_thread"] = int(nearest_threads[rank_idx])
         meta["age_days"] = _paper_age_days(meta.get("update_date"))
         meta["query_cluster_ids"] = query_clusters

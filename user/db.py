@@ -415,6 +415,17 @@ def get_feedback_counts(user_id: str) -> dict[str, int]:
     return counts
 
 
+def get_interacted_paper_count(user_id: str) -> int:
+    """Count distinct papers this user has explicitly acted on."""
+    conn = _connect()
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT arxiv_id) FROM feedback WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return int(row[0] if row else 0)
+
+
 # research mode
 def save_research_note(user_id: str, content: str, source_arxiv_id: str = None):
     now = datetime.now(timezone.utc).isoformat()
@@ -439,7 +450,7 @@ def get_all_notes(user_id: str):
 def delete_saved_paper(user_id: str, arxiv_id: str):
     """
     Removes a 'save' feedback signal for a specific paper.
-    This effectively 'unsaves' the paper from the user's archive and folders.
+    This effectively 'unsaves' the paper from the user's saved papers and folders.
     """
     conn = _connect()
     # We only delete the 'save' signal. 

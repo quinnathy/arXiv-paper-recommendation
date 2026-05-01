@@ -7,7 +7,7 @@ from __future__ import annotations
 import numpy as np
 import streamlit as st
 
-from pipeline.concept_tags import BROAD_CONCEPT_KEYS, CONCEPT_TAG_MAP
+from pipeline.concept_tags import CONCEPT_TAG_MAP
 from pipeline.embed import EmbeddingModel
 from pipeline.index import PaperIndex
 from pipeline.interest_expander import embed_free_text_interests
@@ -17,6 +17,7 @@ from ui.components import (
     TOPIC_LABELS,
     expand_topic_labels,
     free_text_input,
+    loading_spinner_with_message,
     unified_tag_selector,
 )
 from user.db import create_user
@@ -31,7 +32,7 @@ from user.profile import (
 )
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
 
@@ -78,15 +79,15 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         st.subheader("Welcome")
         col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("Log in", use_container_width=True):
+            if st.button("Log in", width="stretch"):
                 st.session_state["auth_mode"] = "Log in"
                 st.rerun()
         with col2:
-            if st.button("Sign up", use_container_width=True):
+            if st.button("Sign up", width="stretch"):
                 st.session_state["auth_mode"] = "Create account"
                 st.rerun()
         with col3:
-            if st.button("Continue as guest", use_container_width=True):
+            if st.button("Continue as guest", width="stretch"):
                 st.session_state["auth_mode"] = "Continue as guest"
                 st.rerun()
         return
@@ -222,19 +223,17 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         # Concept tags
         for key in selected_concepts:
             tag = CONCEPT_TAG_MAP[key]
-            broad = key in BROAD_CONCEPT_KEYS
             seeds.append(
                 make_concept_seed(
                     key,
                     tag.label,
                     concept_embeddings[key],
-                    broad=broad,
                 )
             )
 
         # Free-text interests
         if free_texts:
-            with st.spinner("Embedding your interests..."):
+            with loading_spinner_with_message():
                 model = _get_embed_model()
                 for phrase, emb in embed_free_text_interests(free_texts, model):
                     seeds.append(make_freetext_seed(phrase, emb))
@@ -242,10 +241,10 @@ def render_onboarding(index: PaperIndex, db_path: str) -> None:
         # Scholar papers
         papers = None
         if scholar_url.strip():
-            with st.spinner("Fetching your Scholar profile..."):
+            with loading_spinner_with_message():
                 papers = load_scholar_papers(scholar_url.strip())
             if papers:
-                with st.spinner("Embedding your papers..."):
+                with loading_spinner_with_message():
                     model = _get_embed_model()
                     paper_embeddings = model.embed_papers(papers)
                     for i, paper in enumerate(papers):

@@ -4,12 +4,15 @@ Provides self-contained components that can be composed into pages:
 - paper_card: renders a single paper with action buttons.
 - unified_tag_selector: single multiselect for arXiv categories + concept tags.
 - free_text_input: text area for free-form research interests.
-- loading_spinner_with_message: context manager for custom spinner messages.
+- loading_spinner_with_message: context manager for rolling joke loading states.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from html import escape
 import random
+from uuid import uuid4
 from collections.abc import Sequence
 from typing import Callable
 
@@ -17,6 +20,7 @@ import numpy as np
 import streamlit as st
 
 from pipeline.concept_tags import CONCEPT_TAG_MAP
+from ui.domain_jokes import random_loading_jokes
 
 MAX_ONBOARDING_TAGS = 3
 ONBOARDING_TAG_PILLS_KEY = "onboarding_tag_pills"
@@ -493,13 +497,114 @@ def free_text_input() -> list[str]:
     return [p for p in phrases if p]
 
 
-def loading_spinner_with_message(message: str):
-    """Context manager wrapping st.spinner with a custom message.
+def _rolling_joke_markup(jokes: list[str]) -> str:
+    safe_jokes = [escape(joke) for joke in jokes]
+    loader_id = f"rolling-joke-loader-{uuid4().hex}"
+    seconds_per_joke = 4
+    duration = seconds_per_joke * len(safe_jokes)
+    visible_pct = max(1, ((seconds_per_joke - 0.4) / duration) * 100)
+    fade_pct = max(visible_pct + 1, (seconds_per_joke / duration) * 100)
+    spans = "\n".join(
+        (
+            f'<span class="rjl-joke" style="animation-delay: {idx * seconds_per_joke}s">'
+            f"{joke}</span>"
+        )
+        for idx, joke in enumerate(safe_jokes)
+    )
+    return f"""
+<style>
+.{loader_id} {{
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-height: 1.9rem;
+    margin: 0.45rem 0;
+    color: var(--text-color);
+    font-size: 0.95rem;
+}}
+.{loader_id} .rjl-spinner {{
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+    border: 2px solid rgba(128, 128, 128, 0.28);
+    border-top-color: currentColor;
+    border-radius: 999px;
+    animation: rjl-spin-{loader_id} 0.8s linear infinite;
+}}
+.{loader_id} .rjl-copy {{
+    display: grid;
+    line-height: 1.35;
+}}
+.{loader_id} .rjl-joke {{
+    grid-area: 1 / 1;
+    opacity: 0;
+    animation: rjl-fade-{loader_id} {duration}s infinite;
+}}
+@keyframes rjl-spin-{loader_id} {{
+    to {{ transform: rotate(360deg); }}
+}}
+@keyframes rjl-fade-{loader_id} {{
+    0% {{ opacity: 1; transform: translateY(0); }}
+    3% {{ opacity: 1; transform: translateY(0); }}
+    {visible_pct:.2f}% {{ opacity: 1; transform: translateY(0); }}
+    {fade_pct:.2f}% {{ opacity: 0; transform: translateY(-2px); }}
+    100% {{ opacity: 0; transform: translateY(-2px); }}
+}}
+</style>
+<div class="{loader_id}" role="status" aria-live="polite">
+    <span class="rjl-spinner" aria-hidden="true"></span>
+    <span class="rjl-copy">{spans}</span>
+</div>
+"""
+
+
+def _spinner_only_markup() -> str:
+    loader_id = f"rolling-joke-loader-{uuid4().hex}"
+    return f"""
+<style>
+.{loader_id} {{
+    display: flex;
+    align-items: center;
+    min-height: 1.9rem;
+    margin: 0.45rem 0;
+    color: var(--text-color);
+}}
+.{loader_id} .rjl-spinner {{
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+    border: 2px solid rgba(128, 128, 128, 0.28);
+    border-top-color: currentColor;
+    border-radius: 999px;
+    animation: rjl-spin-{loader_id} 0.8s linear infinite;
+}}
+@keyframes rjl-spin-{loader_id} {{
+    to {{ transform: rotate(360deg); }}
+}}
+</style>
+<div class="{loader_id}" role="status" aria-live="polite">
+    <span class="rjl-spinner" aria-hidden="true"></span>
+</div>
+"""
+
+
+@contextmanager
+def loading_spinner_with_message(message: str | None = None):
+    """Display a rolling local joke while a blocking Streamlit task runs.
 
     Args:
-        message: The message to display inside the spinner.
+        message: Kept for compatibility; operational text is not shown.
 
     Returns:
-        A context manager (st.spinner instance).
+        A context manager that clears itself when the task finishes.
     """
-    return st.spinner(message)
+    placeholder = st.empty()
+    jokes = random_loading_jokes(count=5)
+    placeholder.markdown(
+        _rolling_joke_markup(jokes) if jokes else _spinner_only_markup(),
+        unsafe_allow_html=True,
+    )
+    try:
+        yield
+    finally:
+        placeholder.empty()

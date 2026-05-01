@@ -10,7 +10,7 @@ from recommender.query_search import expand_query, search_papers
 from user.db import get_seen_ids, log_feedback, update_centroids
 from user.profile import apply_feedback
 from user.session import save_centroids_to_session
-from ui.components import paper_card
+from ui.components import loading_spinner_with_message, paper_card
 
 
 QUERY_SEARCH_EXAMPLES = [
@@ -36,13 +36,26 @@ QUERY_SEARCH_EXAMPLES = [
 ]
 
 
+def _clear_query_search_state() -> None:
+    for key in (
+        "query_search_input",
+        "query_search_time_filter",
+        "query_search_options_open",
+        "query_search_query",
+        "query_search_expanded_query",
+        "query_search_results",
+        "query_search_clear_requested",
+    ):
+        st.session_state.pop(key, None)
+
+
 def _rotating_search_placeholder() -> str:
     idx = st.session_state.get("query_search_example_idx", 0)
     st.session_state["query_search_example_idx"] = idx + 1
     return QUERY_SEARCH_EXAMPLES[idx % len(QUERY_SEARCH_EXAMPLES)]
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_query_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
 
@@ -75,17 +88,36 @@ def _handle_search_feedback(arxiv_id: str, signal: str, index: PaperIndex) -> No
     st.rerun()
 
 
-def render_query_search(index: PaperIndex) -> None:
+def render_query_search(index: PaperIndex) -> bool:
+    """Render query search and return True when search results own the page."""
+    if st.session_state.pop("query_search_clear_requested", False):
+        _clear_query_search_state()
+
     user_id = st.session_state["user_id"]
 
     st.markdown("**Search papers by topic, method, dataset, or research question...**")
-    query = st.text_input(
-        "Search papers by topic, method, dataset, or research question...",
-        placeholder=_rotating_search_placeholder(),
-        key="query_search_input",
-        label_visibility="collapsed",
-    )
-    with st.expander("Search options", expanded=False):
+
+    search_col, options_col = st.columns([0.92, 0.08])
+    with search_col:
+        query = st.text_input(
+            "Search papers by topic, method, dataset, or research question...",
+            placeholder=_rotating_search_placeholder(),
+            key="query_search_input",
+            label_visibility="collapsed",
+        )
+    with options_col:
+        options_open = st.session_state.get("query_search_options_open", False)
+        if st.button(
+            "▲" if options_open else "▼",
+            key="query_search_options_toggle",
+            help="Search options",
+            use_container_width=True,
+        ):
+            st.session_state["query_search_options_open"] = not options_open
+            st.rerun()
+
+    time_filter_label = st.session_state.get("query_search_time_filter", "All time")
+    if st.session_state.get("query_search_options_open", False):
         time_filter_label = st.selectbox(
             "Time range",
             options=["All time", "Past year", "Past 6 months", "Past 30 days"],
@@ -102,7 +134,7 @@ def render_query_search(index: PaperIndex) -> None:
             "Past 30 days": 30,
         }[time_filter_label]
         expanded = expand_query(query)
-        with st.spinner("Searching personalized paper results..."):
+        with loading_spinner_with_message():
             model = _get_query_embed_model()
             query_embedding = model.embed_query(expanded)
             results = search_papers(
@@ -121,9 +153,13 @@ def render_query_search(index: PaperIndex) -> None:
 
     results = st.session_state.get("query_search_results", [])
     if not results:
-        return
+        return False
 
     st.subheader(f"Search results for \"{st.session_state.get('query_search_query', '')}\"")
+    if st.button("Go back to daily recommendations", key="query_search_clear"):
+        st.session_state["query_search_clear_requested"] = True
+        st.rerun()
+
     for meta in results:
         paper_card(
             meta,
@@ -135,3 +171,5 @@ def render_query_search(index: PaperIndex) -> None:
             st.session_state["active_arxiv_id"] = meta["id"]
             st.session_state["requested_tab"] = "Research Lab"
             st.rerun()
+
+    return True

@@ -28,7 +28,7 @@ from user.db import (
 )
 from user.profile import apply_feedback
 from user.session import save_centroids_to_session
-from ui.components import paper_card
+from ui.components import loading_spinner_with_message, paper_card
 from ui.domain_jokes import select_domain_joke
 from ui.query_search import render_query_search
 
@@ -222,7 +222,7 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
             color_by=color_by,
         )
         fig.update_layout(title=f"{artifact_name} Paper Embedding Space")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
         if show_centroids and centroid_coords is None:
             st.caption("User centroids could not be placed on the current sampled map.")
         if viz_meta.get("explained_variance_ratio"):
@@ -242,7 +242,8 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     user_id = st.session_state["user_id"]
     user = get_user(user_id)
 
-    render_query_search(index)
+    if render_query_search(index):
+        return
 
     hour = datetime.now().hour
     if hour < 5:
@@ -272,7 +273,7 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
         diversity = st.session_state["user_diversity"]
         seen_ids = get_seen_ids(user_id)
         excluded_ids = seen_ids | st.session_state["shown_ids"]
-        with st.spinner("Finding your papers..."):
+        with loading_spinner_with_message():
             recs = recommend(
                 centroids,
                 excluded_ids,
@@ -280,6 +281,22 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
                 diversity=diversity,
                 n=DAILY_FEED_SIZE,
             )
+            if len(recs) < DAILY_FEED_SIZE and seen_ids:
+                fallback_recs = recommend(
+                    centroids,
+                    st.session_state["shown_ids"],
+                    index,
+                    diversity=diversity,
+                    n=DAILY_FEED_SIZE,
+                )
+                rec_ids = {r["id"] for r in recs}
+                for rec in fallback_recs:
+                    if rec["id"] in rec_ids:
+                        continue
+                    recs.append(rec)
+                    rec_ids.add(rec["id"])
+                    if len(recs) >= DAILY_FEED_SIZE:
+                        break
         mark_papers_seen(user_id, [r["id"] for r in recs])
         st.session_state["todays_recs"] = recs
         st.session_state["shown_ids"].update(r["id"] for r in recs)
@@ -290,15 +307,13 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
     recs = st.session_state["todays_recs"]
 
     if not recs:
-        st.info("You've explored all available papers in your areas for this session.")
+        st.info("No recommendations are available right now.")
         if st.button("Reset and start fresh"):
             st.session_state["shown_ids"] = set()
             st.session_state.pop("todays_recs", None)
             st.session_state.pop("responded", None)
             st.rerun()
         return
-    if len(recs) < DAILY_FEED_SIZE:
-        st.warning("You've seen most papers in your areas. Here's what we found:")
 
     for meta in recs:
         paper_card(

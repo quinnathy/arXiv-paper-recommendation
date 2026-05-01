@@ -342,9 +342,6 @@ CONCEPT_TAG_MAP: dict[str, ConceptTag] = {tag.key: tag for tag in CONCEPT_TAGS}
 CONCEPT_EMBEDDINGS_FILE = "concept_embeddings.npy"
 CONCEPT_EMBEDDINGS_META_FILE = "concept_embeddings_meta.json"
 
-# Broad concepts that should contribute to threads but not easily create their own.
-BROAD_CONCEPT_KEYS: set[str] = set()
-
 
 # ---------------------------------------------------------------------------
 # Embedding helpers
