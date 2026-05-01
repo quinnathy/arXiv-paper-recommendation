@@ -222,7 +222,7 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
         fig = make_user_cluster_plot(
             filtered,
             user_centroid_coords=centroid_coords,
-            searched_cluster_ids=searched_clusters if show_searched else None,
+            searched_cluster_ids=searched_clusters if show_searched else None,   
             served_paper_indices=served_indices if show_served else None,
             color_by=color_by,
         )
@@ -242,8 +242,19 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
 
     if render_query_search(index):
         return
+    
+    hour = datetime.now().hour
 
-    st.title(f"Hello, {user['display_name']}")
+    if 5 <= hour < 12:
+        greeting = "Good morning"
+    elif 12 <= hour < 18:
+        greeting = "Good afternoon"
+    elif 18 <= hour < 22:
+        greeting = "Good evening"
+    else:
+        greeting = "Up late? No worries"
+
+    st.title(f"{greeting}, {user['display_name']}")
 
     if "todays_recs" not in st.session_state:
         centroids = st.session_state["user_centroids"]
