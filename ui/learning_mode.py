@@ -572,7 +572,8 @@ def _render_workspace(index: PaperIndex, paper_lookup):
 
     st.divider()
 
-    summary_running = st.session_state.get("workspace_pending_action") == "summary"
+    pending_action = st.session_state.get("workspace_pending_action")
+    action_running = pending_action in {"see_more", "summary", "visualization"}
     summary_ready = _workspace_summary_ready(workspace_papers)
 
     with st.container(key="workspace_action_bar"):
@@ -582,17 +583,18 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                 "See More",
                 key="workspace_see_more",
                 width="stretch",
-                disabled=not workspace_papers or summary_running,
+                disabled=not workspace_papers or action_running,
                 type="primary",
             ):
-                _load_workspace_similar_papers(index, workspace_papers)
-                st.session_state["workspace_result_view"] = "similar"
+                st.session_state["workspace_pending_action"] = "see_more"
+                st.session_state.pop("workspace_result_view", None)
+                st.rerun()
         with action_cols[1]:
             if st.button(
                 "Summarize",
                 key="workspace_summarize",
                 width="stretch",
-                disabled=not workspace_papers or summary_running,
+                disabled=not workspace_papers or action_running,
                 type="primary",
             ):
                 st.session_state["workspace_pending_action"] = "summary"
@@ -603,7 +605,7 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                 "Visualization",
                 key="workspace_visualize",
                 width="stretch",
-                disabled=not workspace_papers or summary_running or not summary_ready,
+                disabled=not workspace_papers or action_running or not summary_ready,
                 type="primary",
                 help=(
                     None
@@ -611,14 +613,27 @@ def _render_workspace(index: PaperIndex, paper_lookup):
                     else "Run Summarize before opening the visualization."
                 ),
             ):
-                _load_workspace_concept_map(index, workspace_papers)
-                st.session_state["workspace_result_view"] = "visualization"
+                st.session_state["workspace_pending_action"] = "visualization"
+                st.session_state.pop("workspace_result_view", None)
+                st.rerun()
 
-    if summary_running:
+    if pending_action == "see_more":
+        _load_workspace_similar_papers(index, workspace_papers)
+        st.session_state.pop("workspace_pending_action", None)
+        st.session_state["workspace_result_view"] = "similar"
+        st.rerun()
+
+    if pending_action == "summary":
         _load_workspace_summary(workspace_papers)
         st.session_state.pop("workspace_pending_action", None)
         if st.session_state.get("workspace_summary"):
             st.session_state["workspace_result_view"] = "summary"
+        st.rerun()
+
+    if pending_action == "visualization":
+        _load_workspace_concept_map(index, workspace_papers)
+        st.session_state.pop("workspace_pending_action", None)
+        st.session_state["workspace_result_view"] = "visualization"
         st.rerun()
 
     _render_workspace_result_panel(index, workspace_papers, set(paper_lookup))
