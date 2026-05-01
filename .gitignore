@@ -9,6 +9,8 @@ __pycache__/
 .pytest_cache/
 .pytest-tmp/
 tmp_pytest_run/
+tmp_pytest_run*/
+codex_tmp_see_more_test/
 pytest-cache-files-*/
 
 # Environment
