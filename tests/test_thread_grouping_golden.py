@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 
 from pipeline.concept_tags import (
-    BROAD_CONCEPT_KEYS,
     CONCEPT_TAG_MAP,
     load_concept_embedding_artifacts,
 )
@@ -108,7 +107,7 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
             "diffusion models for medical imaging",
             "reinforcement learning for robot navigation",
         ),
-        (2, 2),
+        (2, 3),
     ),
     GoldenCase(
         "bio_climate",
@@ -126,10 +125,10 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
         "cv_finance",
         ("computer_vision", "finance_economics_ai"),
         ("visual representation learning", "market forecasting with machine learning"),
-        (2, 2),
+        (2, 3),
     ),
     GoldenCase(
-        "broad_ai_ml_specific_bio",
+        "category_context_ai_ml_specific_bio",
         ("artificial_intelligence", "machine_learning"),
         ("single-cell perturbation modeling",),
         (1, 1),
@@ -152,9 +151,9 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
         ("robot navigation with reinforcement learning",),
         (1, 2),
     ),
-    GoldenCase("robotics_number_theory", ("robotics", "number_theory"), (), (2, 2)),
+    GoldenCase("robotics_number_theory", ("robotics", "number_theory"), (), (2, MAX_THREADS)),
     GoldenCase("astrophysics_nlp", ("astrophysics", "natural_language_processing"), (), (2, 2)),
-    GoldenCase("quantum_healthcare", ("quantum_physics", "healthcare_ai"), (), (2, 2)),
+    GoldenCase("quantum_healthcare", ("quantum_physics", "healthcare_ai"), (), (1, 2)),
     GoldenCase(
         "climate_llm",
         ("climate_weather", "large_language_models"),
@@ -169,7 +168,7 @@ GOLDEN_CASES: tuple[GoldenCase, ...] = (
             "reinforcement learning for robot navigation",
             "neural operators for weather forecasting",
         ),
-        (3, 3),
+        (3, MAX_THREADS),
     ),
     GoldenCase(
         "bio_nlp_astrophysics",
@@ -324,7 +323,6 @@ def build_golden_seeds(
                 key,
                 concept.label,
                 concept_embeddings[key],
-                broad=key in BROAD_CONCEPT_KEYS,
             )
         )
     if case.free_texts:

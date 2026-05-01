@@ -128,7 +128,33 @@ arXiv-paper-recommendation/
 pip install -r requirements.txt
 ```
 
-### 2. Run the offline pipeline
+### 2. Set up the OpenAI API key
+
+The Workspace summarization feature expects an OpenAI API key in:
+
+```text
+.streamlit/secrets.toml
+```
+
+The API key is provided separately in the submission notes.
+
+To create the secrets file from the included template, run:
+
+```powershell
+Copy-Item .streamlit\secrets.example.toml .streamlit\secrets.toml
+```
+
+Then open `.streamlit/secrets.toml` and replace the placeholder:
+
+```toml
+OPENAI_API_KEY = "paste-your-openai-api-key-here"
+OPENAI_SUMMARY_MODEL = "gpt-5.4-mini"
+```
+
+Restart Streamlit after editing the file. The real `.streamlit/secrets.toml`
+file is ignored by git.
+
+### 3. Run the offline pipeline
 
 This downloads the full arXiv dataset first, then samples/filters papers, embeds them, and clusters them. Use `--limit` for faster dev iterations:
 
@@ -152,7 +178,7 @@ python scripts/run_offline_pipeline.py --limit 50000 --hf-endpoint https://hf-mi
 python scripts/run_offline_pipeline.py
 ```
 <!--  -->
-### 3. Launch the app
+### 4. Launch the app
 
 ```bash
 streamlit run app.py

@@ -12,12 +12,43 @@ from pipeline.index import PaperIndex
 from recommender.visualization import get_primary_category
 
 
+KEYWORD_STOPWORDS = {
+    "about",
+    "after",
+    "also",
+    "among",
+    "based",
+    "been",
+    "being",
+    "between",
+    "both",
+    "from",
+    "have",
+    "into",
+    "more",
+    "most",
+    "over",
+    "paper",
+    "papers",
+    "present",
+    "propose",
+    "proposed",
+    "result",
+    "results",
+    "show",
+    "shown",
+    "such",
+    "than",
+    "that",
+    "their",
+    "these",
+    "this",
+    "through",
+    "using",
+    "with",
+}
+
 VIZ_ARTIFACTS = (
-    {
-        "name": "UMAP",
-        "coords": Path("data/diagnostics/umap_cluster_viz_coords.npy"),
-        "indices": Path("data/diagnostics/umap_cluster_viz_indices.npy"),
-    },
     {
         "name": "PCA",
         "coords": Path("data/diagnostics/pca_cluster_viz_coords.npy"),
@@ -53,6 +84,90 @@ def _concept_label(concept_key: str) -> str:
     return concept.label
 
 
+def _paper_categories(meta: dict) -> set[str]:
+    categories = meta.get("categories", [])
+    if isinstance(categories, str):
+        return {category for category in categories.split() if category}
+    return {str(category) for category in categories if category}
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def _keyword_tokens(meta: dict) -> set[str]:
+    text = f"{meta.get('title', '')} {meta.get('abstract', '')}".lower()
+    normalized = "".join(char if char.isalnum() else " " for char in text)
+    return {
+        token
+        for token in normalized.split()
+        if len(token) >= 4 and token not in KEYWORD_STOPWORDS and not token.isdigit()
+    }
+
+
+def _top_concept_keys(
+    concept_sims: np.ndarray | None,
+    concept_keys: list[str],
+    paper_pos: int,
+    top_k: int = 4,
+    threshold: float = 0.3,
+) -> set[str]:
+    if concept_sims is None or not concept_keys:
+        return set()
+    scores = concept_sims[paper_pos]
+    top = np.argsort(scores)[::-1][:top_k]
+    return {
+        concept_keys[int(pos)]
+        for pos in top
+        if float(scores[int(pos)]) >= threshold
+    }
+
+
+def _paper_connection_score(
+    left_meta: dict,
+    right_meta: dict,
+    embedding_similarity: float,
+    left_concepts: set[str],
+    right_concepts: set[str],
+) -> dict:
+    left_categories = _paper_categories(left_meta)
+    right_categories = _paper_categories(right_meta)
+    left_keywords = _keyword_tokens(left_meta)
+    right_keywords = _keyword_tokens(right_meta)
+
+    category_overlap = _jaccard(left_categories, right_categories)
+    concept_overlap = _jaccard(left_concepts, right_concepts)
+    keyword_overlap = _jaccard(left_keywords, right_keywords)
+    score = (
+        0.70 * embedding_similarity
+        + 0.20 * category_overlap
+        + 0.10 * keyword_overlap
+    )
+    if left_concepts or right_concepts:
+        score = (
+            0.55 * embedding_similarity
+            + 0.20 * category_overlap
+            + 0.15 * concept_overlap
+            + 0.10 * keyword_overlap
+        )
+
+    shared_categories = sorted(left_categories & right_categories)
+    shared_concepts = sorted(_concept_label(key) for key in left_concepts & right_concepts)
+    shared_keywords = sorted(left_keywords & right_keywords)[:8]
+    return {
+        "score": float(np.clip(score, 0.0, 1.0)),
+        "embedding_similarity": float(embedding_similarity),
+        "category_overlap": float(category_overlap),
+        "concept_overlap": float(concept_overlap),
+        "keyword_overlap": float(keyword_overlap),
+        "shared_categories": shared_categories,
+        "shared_concepts": shared_concepts,
+        "shared_keywords": shared_keywords,
+    }
+
+
 def _fallback_paper_coords(paper_vectors: np.ndarray) -> tuple[np.ndarray, str]:
     if len(paper_vectors) == 1:
         return np.array([[0.0, 0.0]], dtype=np.float32), "fallback"
@@ -74,6 +189,76 @@ def _normalize_coords(coords: np.ndarray) -> np.ndarray:
     if scale > 1e-12:
         coords = coords / scale
     return coords
+
+
+def _spread_overlapping_coords(
+    coords: np.ndarray,
+    min_distance: float = 0.34,
+    iterations: int = 80,
+) -> np.ndarray:
+    coords = _normalize_coords(coords)
+    if len(coords) < 2:
+        return coords
+
+    for _ in range(iterations):
+        delta = coords[:, None, :] - coords[None, :, :]
+        distances = np.linalg.norm(delta, axis=2)
+        moved = False
+        for i in range(len(coords)):
+            for j in range(i + 1, len(coords)):
+                distance = float(distances[i, j])
+                if distance >= min_distance:
+                    continue
+                if distance < 1e-9:
+                    direction = np.array([1.0, 0.0], dtype=np.float32)
+                else:
+                    direction = delta[i, j] / distance
+                shift = direction * ((min_distance - distance) / 2.0)
+                coords[i] += shift
+                coords[j] -= shift
+                moved = True
+        if not moved:
+            break
+
+    return _normalize_coords(coords)
+
+
+def _custom_distance_coords(
+    custom_paper_sims: np.ndarray,
+    initial_coords: np.ndarray,
+) -> tuple[np.ndarray, str]:
+    if len(custom_paper_sims) <= 2:
+        return _spread_overlapping_coords(initial_coords), "custom distance layout"
+
+    distances = 1.0 - np.clip(custom_paper_sims, 0.0, 1.0)
+    np.fill_diagonal(distances, 0.0)
+    try:
+        from sklearn.manifold import MDS
+
+        initial = _normalize_coords(initial_coords)
+        try:
+            coords = MDS(
+                n_components=2,
+                metric_mds=True,
+                metric="precomputed",
+                init="random",
+                random_state=42,
+                max_iter=300,
+                eps=1e-4,
+                n_init=1,
+            ).fit_transform(distances, init=initial)
+        except TypeError:
+            coords = MDS(
+                n_components=2,
+                dissimilarity="precomputed",
+                random_state=42,
+                max_iter=300,
+                eps=1e-4,
+                n_init=1,
+            ).fit_transform(distances, init=initial)
+        return _spread_overlapping_coords(coords), "custom distance MDS"
+    except Exception:
+        return _spread_overlapping_coords(initial_coords), "PCA fallback"
 
 
 def _embedding_space_coords(
@@ -225,7 +410,7 @@ def build_workspace_concept_map(
     index: PaperIndex,
     workspace_ids: list[str],
     paper_top_k: int = 3,
-    paper_similarity_threshold: float = 0.45,
+    paper_similarity_threshold: float = 0.35,
     concept_top_k: int = 3,
     concept_similarity_threshold: float = 0.35,
     max_anchor_nodes: int = 12,
@@ -243,11 +428,10 @@ def build_workspace_concept_map(
     paper_vectors = _unit_rows(np.asarray(index.embeddings[paper_indices], dtype=np.float32))
     paper_coords, position_source = _embedding_space_coords(index, paper_indices, paper_vectors)
     paper_sims = paper_vectors @ paper_vectors.T
-    theme_labels = _theme_components(paper_sims, theme_similarity_threshold)
+    paper_metas = [index.paper_meta[paper_idx] for paper_idx in paper_indices]
 
     nodes: list[dict] = []
-    for pos, paper_idx in enumerate(paper_indices):
-        meta = index.paper_meta[paper_idx]
+    for pos, meta in enumerate(paper_metas):
         arxiv_id = str(meta.get("id", workspace_ids[pos]))
         title = meta.get("title", arxiv_id)
         nodes.append(
@@ -258,7 +442,6 @@ def build_workspace_concept_map(
                 "title": title,
                 "type": "paper",
                 "primary_category": get_primary_category(meta.get("categories", "")),
-                "theme": int(theme_labels[pos]),
                 "vector": paper_vectors[pos],
                 "x": float(paper_coords[pos, 0]),
                 "y": float(paper_coords[pos, 1]),
@@ -266,31 +449,6 @@ def build_workspace_concept_map(
         )
 
     edges: list[dict] = []
-    if len(paper_vectors) > 1:
-        seen_pairs: set[tuple[str, str]] = set()
-        for i, node in enumerate(nodes):
-            neighbors = np.argsort(paper_sims[i])[::-1]
-            kept = 0
-            for j in neighbors:
-                j = int(j)
-                if i == j or float(paper_sims[i, j]) < paper_similarity_threshold:
-                    continue
-                pair = tuple(sorted((node["id"], nodes[j]["id"])))
-                if pair in seen_pairs:
-                    continue
-                seen_pairs.add(pair)
-                edges.append(
-                    {
-                        "source": pair[0],
-                        "target": pair[1],
-                        "weight": float(paper_sims[i, j]),
-                        "type": "paper_similarity",
-                    }
-                )
-                kept += 1
-                if kept >= paper_top_k:
-                    break
-
     anchors, concept_sims, concept_keys = _build_concept_anchors(
         index.concept_embeddings,
         paper_vectors,
@@ -298,11 +456,70 @@ def build_workspace_concept_map(
         concept_similarity_threshold,
         max_anchor_nodes,
     )
-    nodes.extend(anchors)
+
+    paper_concept_sets = [
+        _top_concept_keys(
+            concept_sims,
+            concept_keys,
+            paper_pos,
+            top_k=concept_top_k,
+            threshold=concept_similarity_threshold,
+        )
+        for paper_pos in range(len(paper_vectors))
+    ]
+    custom_paper_sims = np.eye(len(paper_vectors), dtype=np.float32)
+    if len(paper_vectors) > 1:
+        pair_scores: dict[tuple[int, int], dict] = {}
+        for i in range(len(paper_vectors)):
+            for j in range(i + 1, len(paper_vectors)):
+                score_parts = _paper_connection_score(
+                    paper_metas[i],
+                    paper_metas[j],
+                    float(paper_sims[i, j]),
+                    paper_concept_sets[i],
+                    paper_concept_sets[j],
+                )
+                pair_scores[(i, j)] = score_parts
+                custom_paper_sims[i, j] = score_parts["score"]
+                custom_paper_sims[j, i] = score_parts["score"]
+
+        seen_pairs: set[tuple[str, str]] = set()
+        for i, node in enumerate(nodes):
+            neighbors = np.argsort(custom_paper_sims[i])[::-1]
+            kept = 0
+            for j in neighbors:
+                j = int(j)
+                if i == j or float(custom_paper_sims[i, j]) < paper_similarity_threshold:
+                    continue
+                pair = tuple(sorted((node["id"], nodes[j]["id"])))
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                score_parts = pair_scores[tuple(sorted((i, j)))]
+                edges.append(
+                    {
+                        "source": pair[0],
+                        "target": pair[1],
+                        "weight": score_parts["score"],
+                        "type": "paper_similarity",
+                        **score_parts,
+                    }
+                )
+                kept += 1
+                if kept >= paper_top_k:
+                    break
+
+    theme_labels = _theme_components(custom_paper_sims, theme_similarity_threshold)
+    paper_coords, layout_source = _custom_distance_coords(custom_paper_sims, paper_coords)
+    position_source = f"{layout_source} using {position_source} positions"
+    for pos, node in enumerate(nodes):
+        node["theme"] = int(theme_labels[pos])
+        node["x"] = float(paper_coords[pos, 0])
+        node["y"] = float(paper_coords[pos, 1])
 
     strongest_anchor_by_theme: dict[int, tuple[float, str]] = {}
     if concept_sims is not None:
-        for paper_pos, paper_node in enumerate([node for node in nodes if node["type"] == "paper"]):
+        for paper_pos, paper_node in enumerate(nodes):
             scored: list[tuple[float, dict]] = []
             for anchor in anchors:
                 key = anchor["key"]
@@ -325,8 +542,37 @@ def build_workspace_concept_map(
                     }
                 )
 
-    paper_nodes = [node for node in nodes if node["type"] == "paper"]
+    single_concepts_by_paper: dict[str, list[str]] = {}
+    kept_anchors: list[dict] = []
+    kept_anchor_ids: set[str] = set()
     for anchor in anchors:
+        connected = [
+            edge
+            for edge in edges
+            if edge["type"] == "concept_anchor" and edge["target"] == anchor["id"]
+        ]
+        if len(connected) > 1:
+            kept_anchors.append(anchor)
+            kept_anchor_ids.add(anchor["id"])
+        elif len(connected) == 1:
+            source_id = connected[0]["source"]
+            single_concepts_by_paper.setdefault(source_id, []).append(anchor["label"])
+
+    if single_concepts_by_paper:
+        for node in nodes:
+            concepts = single_concepts_by_paper.get(node["id"], [])
+            if concepts:
+                node["single_concepts"] = sorted(set(concepts))
+    anchors = kept_anchors
+    edges = [
+        edge
+        for edge in edges
+        if edge["type"] != "concept_anchor" or edge["target"] in kept_anchor_ids
+    ]
+    nodes.extend(anchors)
+
+    paper_nodes = [node for node in nodes if node["type"] == "paper"]
+    for anchor_pos, anchor in enumerate(anchors):
         connected = [
             edge for edge in edges if edge["type"] == "concept_anchor" and edge["target"] == anchor["id"]
         ]
@@ -343,8 +589,13 @@ def build_workspace_concept_map(
             coord = (coords_arr * weights_arr[:, None]).sum(axis=0)
         else:
             coord = np.array([0.0, 0.0], dtype=np.float32)
-        anchor["x"] = float(coord[0] * 1.05)
-        anchor["y"] = float(coord[1] * 1.05)
+        direction = coord / np.maximum(np.linalg.norm(coord), 1e-12)
+        if np.linalg.norm(direction) < 1e-9:
+            angle = 2.0 * np.pi * anchor_pos / max(len(anchors), 1)
+            direction = np.array([np.cos(angle), np.sin(angle)], dtype=np.float32)
+        anchor_coord = coord + (direction * 0.24)
+        anchor["x"] = float(anchor_coord[0])
+        anchor["y"] = float(anchor_coord[1])
 
     theme_names = {
         theme_id: label
@@ -363,7 +614,7 @@ def build_workspace_concept_map(
         if key not in by_pair or edge["weight"] > by_pair[key]["weight"]:
             by_pair[key] = edge
 
-    summary = _paper_summary(nodes, paper_sims)
+    summary = _paper_summary(nodes, custom_paper_sims)
     summary["theme_count"] = len(set(theme_labels))
     summary["theme_labels"] = [
         theme_names.get(theme_id, f"Theme {theme_id + 1}")
@@ -434,12 +685,43 @@ def make_workspace_concept_map_figure(graph: dict):
             x_values.extend([source["x"], target["x"], None])
             y_values.extend([source["y"], target["y"], None])
             distance = 1.0 - float(edge["weight"])
-            hover_label = (
-                f"<b>{escape(str(source.get('label', source['id'])))}</b> - "
-                f"<b>{escape(str(target.get('label', target['id'])))}</b><br>"
-                f"similarity: {edge['weight']:.3f}<br>"
-                f"distance: {distance:.3f}"
-            )
+            source_label = escape(str(source.get("label", source["id"])))
+            target_label = escape(str(target.get("label", target["id"])))
+            if edge_type == "paper_similarity":
+                hover_parts = [
+                    f"<b>{source_label}</b> - <b>{target_label}</b>",
+                    f"custom similarity: {edge['weight']:.3f}",
+                    f"custom distance: {distance:.3f}",
+                    f"embedding similarity: {edge.get('embedding_similarity', edge['weight']):.3f}",
+                    f"category overlap: {edge.get('category_overlap', 0.0):.3f}",
+                    f"concept overlap: {edge.get('concept_overlap', 0.0):.3f}",
+                    f"keyword overlap: {edge.get('keyword_overlap', 0.0):.3f}",
+                ]
+                shared_categories = edge.get("shared_categories", [])
+                shared_concepts = edge.get("shared_concepts", [])
+                shared_keywords = edge.get("shared_keywords", [])
+                if shared_categories:
+                    hover_parts.append(
+                        "shared categories: "
+                        + escape(", ".join(str(item) for item in shared_categories))
+                    )
+                if shared_concepts:
+                    hover_parts.append(
+                        "shared concepts: "
+                        + escape(", ".join(str(item) for item in shared_concepts))
+                    )
+                if shared_keywords:
+                    hover_parts.append(
+                        "shared keywords: "
+                        + escape(", ".join(str(item) for item in shared_keywords))
+                    )
+                hover_label = "<br>".join(hover_parts)
+            else:
+                hover_label = (
+                    f"<b>{source_label}</b> - <b>{target_label}</b><br>"
+                    f"similarity: {edge['weight']:.3f}<br>"
+                    f"distance: {distance:.3f}"
+                )
             for fraction in (0.4, 0.5, 0.6):
                 hover_x_values.append(
                     source["x"] + (target["x"] - source["x"]) * fraction
@@ -477,38 +759,38 @@ def make_workspace_concept_map_figure(graph: dict):
             )
         )
 
-    paper_palette = ["#2563eb", "#dc2626", "#0891b2", "#ca8a04", "#7c3aed", "#059669"]
     paper_nodes = [node for node in nodes if node.get("type") == "paper"]
-    for theme in sorted({int(node.get("theme", 0)) for node in paper_nodes}):
-        group = [node for node in paper_nodes if int(node.get("theme", 0)) == theme]
+    if paper_nodes:
         fig.add_trace(
             go.Scatter(
-                x=[node["x"] for node in group],
-                y=[node["y"] for node in group],
+                x=[node["x"] for node in paper_nodes],
+                y=[node["y"] for node in paper_nodes],
                 mode="markers+text",
-                name=group[0].get("theme_label", f"Theme {theme + 1}"),
-                text=[node["label"] for node in group],
+                name="Paper",
+                text=[node["label"] for node in paper_nodes],
                 textposition="top center",
                 marker=dict(
                     symbol="circle",
                     size=19,
-                    color=paper_palette[theme % len(paper_palette)],
+                    color="#2563eb",
                     line=dict(width=1.5, color="white"),
                 ),
                 customdata=[
                     [
                         node.get("title", node["label"]),
-                        node.get("theme_label", f"Theme {theme + 1}"),
+                        node.get("primary_category", "unknown"),
                         node.get("paper_connection_count", 0),
                         node.get("concept_connection_count", 0),
+                        ", ".join(node.get("single_concepts", [])) or "none",
                     ]
-                    for node in group
+                    for node in paper_nodes
                 ],
                 hovertemplate=(
                     "<b>%{customdata[0]}</b><br>"
-                    "theme: %{customdata[1]}<br>"
+                    "category: %{customdata[1]}<br>"
                     "paper links: %{customdata[2]}<br>"
-                    "concept links: %{customdata[3]}<extra></extra>"
+                    "shared concept links: %{customdata[3]}<br>"
+                    "paper-only concepts: %{customdata[4]}<extra></extra>"
                 ),
             )
         )

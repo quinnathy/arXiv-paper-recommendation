@@ -15,6 +15,7 @@ except ImportError:
     st_cropper = None
 
 from user.db import get_all_notes, save_research_note
+from ui.components import loading_spinner_with_message
 
 def render_research_mode(index=None):
     if fitz is None:
@@ -38,7 +39,7 @@ def render_research_mode(index=None):
     try:
         from pipeline.transcribe import download_pdf
 
-        with st.spinner(f"Fetching paper {active_id} from ArXiv..."):
+        with loading_spinner_with_message():
             pdf_path = download_pdf(active_id)
         
         # Verify the file actually exists on disk now

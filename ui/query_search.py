@@ -10,7 +10,7 @@ from recommender.query_search import expand_query, search_papers
 from user.db import get_seen_ids, log_feedback, update_centroids
 from user.profile import apply_feedback
 from user.session import save_centroids_to_session
-from ui.components import paper_card
+from ui.components import loading_spinner_with_message, paper_card
 
 
 QUERY_SEARCH_EXAMPLES = [
@@ -36,13 +36,26 @@ QUERY_SEARCH_EXAMPLES = [
 ]
 
 
+def _clear_query_search_state() -> None:
+    for key in (
+        "query_search_input",
+        "query_search_time_filter",
+        "query_search_options_open",
+        "query_search_query",
+        "query_search_expanded_query",
+        "query_search_results",
+        "query_search_clear_requested",
+    ):
+        st.session_state.pop(key, None)
+
+
 def _rotating_search_placeholder() -> str:
     idx = st.session_state.get("query_search_example_idx", 0)
     st.session_state["query_search_example_idx"] = idx + 1
     return QUERY_SEARCH_EXAMPLES[idx % len(QUERY_SEARCH_EXAMPLES)]
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_query_embed_model() -> EmbeddingModel:
     return EmbeddingModel()
 
@@ -77,6 +90,9 @@ def _handle_search_feedback(arxiv_id: str, signal: str, index: PaperIndex) -> No
 
 def render_query_search(index: PaperIndex) -> bool:
     """Render query search and return True when search results own the page."""
+    if st.session_state.pop("query_search_clear_requested", False):
+        _clear_query_search_state()
+
     user_id = st.session_state["user_id"]
 
     st.markdown("**Search papers by topic, method, dataset, or research question...**")
@@ -118,7 +134,7 @@ def render_query_search(index: PaperIndex) -> bool:
             "Past 30 days": 30,
         }[time_filter_label]
         expanded = expand_query(query)
-        with st.spinner("Searching personalized paper results..."):
+        with loading_spinner_with_message():
             model = _get_query_embed_model()
             query_embedding = model.embed_query(expanded)
             results = search_papers(
@@ -140,13 +156,8 @@ def render_query_search(index: PaperIndex) -> bool:
         return False
 
     st.subheader(f"Search results for \"{st.session_state.get('query_search_query', '')}\"")
-    if st.button("Back to personalized feed", key="query_search_clear"):
-        for key in (
-            "query_search_query",
-            "query_search_expanded_query",
-            "query_search_results",
-        ):
-            st.session_state.pop(key, None)
+    if st.button("Go back to daily recommendations", key="query_search_clear"):
+        st.session_state["query_search_clear_requested"] = True
         st.rerun()
 
     for meta in results:

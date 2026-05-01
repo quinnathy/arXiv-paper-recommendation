@@ -30,9 +30,41 @@ EMA_ALPHA: float = 0.15
 # Agglomerative grouping defaults
 # ---------------------------------------------------------------------------
 
-MERGE_THRESHOLD: float = 0.05
+MERGE_THRESHOLD: float = 0.03
 MAX_THREADS: int = 3
 CORE_SPLIT_POWER: float = 0.6
+
+
+# ---------------------------------------------------------------------------
+# Seed source defaults
+# ---------------------------------------------------------------------------
+
+SEED_SOURCE_CONFIG: dict[str, dict[str, float]] = {
+    "arxiv_category": {
+        "weight": 1.8,
+        "reliability": 0.9,
+        "specificity": 0.3,
+        "split_power": 0.45,
+    },
+    "predefined_tag": {
+        "weight": 1.8,
+        "reliability": 0.9,
+        "specificity": 0.7,
+        "split_power": 0.7,
+    },
+    "scholar_title": {
+        "weight": 2.0,
+        "reliability": 0.95,
+        "specificity": 0.8,
+        "split_power": 0.9,
+    },
+    "free_text": {
+        "weight": 2.0,
+        "reliability": 0.8,
+        "specificity": 0.9,
+        "split_power": 1.0,
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -95,37 +127,27 @@ class ProfileInitializationResult:
 
 def make_category_seed(code: str, label: str, embedding: np.ndarray) -> SeedSignal:
     """Create a seed from an arXiv category centroid."""
+    config = SEED_SOURCE_CONFIG["arxiv_category"]
     return SeedSignal(
         vector=embedding,
-        weight=1.0,
-        reliability=0.9,
-        specificity=0.3,
-        split_power=0.4,
+        weight=config["weight"],
+        reliability=config["reliability"],
+        specificity=config["specificity"],
+        split_power=config["split_power"],
         label=label,
         source="arxiv_category",
     )
 
 
-def make_concept_seed(
-    key: str, label: str, embedding: np.ndarray, broad: bool = False,
-) -> SeedSignal:
+def make_concept_seed(key: str, label: str, embedding: np.ndarray) -> SeedSignal:
     """Create a seed from a predefined concept tag."""
-    if broad:
-        return SeedSignal(
-            vector=embedding,
-            weight=1.0,
-            reliability=0.9,
-            specificity=0.5,
-            split_power=0.3,
-            label=label,
-            source="predefined_tag",
-        )
+    config = SEED_SOURCE_CONFIG["predefined_tag"]
     return SeedSignal(
         vector=embedding,
-        weight=1.5,
-        reliability=0.9,
-        specificity=0.7,
-        split_power=0.7,
+        weight=config["weight"],
+        reliability=config["reliability"],
+        specificity=config["specificity"],
+        split_power=config["split_power"],
         label=label,
         source="predefined_tag",
     )
@@ -133,12 +155,13 @@ def make_concept_seed(
 
 def make_scholar_seed(title: str, embedding: np.ndarray) -> SeedSignal:
     """Create a seed from a Google Scholar paper embedding."""
+    config = SEED_SOURCE_CONFIG["scholar_title"]
     return SeedSignal(
         vector=embedding,
-        weight=1.5,
-        reliability=0.95,
-        specificity=0.8,
-        split_power=0.9,
+        weight=config["weight"],
+        reliability=config["reliability"],
+        specificity=config["specificity"],
+        split_power=config["split_power"],
         label=title,
         source="scholar_title",
     )
@@ -146,12 +169,13 @@ def make_scholar_seed(title: str, embedding: np.ndarray) -> SeedSignal:
 
 def make_freetext_seed(phrase: str, embedding: np.ndarray) -> SeedSignal:
     """Create a seed from a user-provided free-text interest."""
+    config = SEED_SOURCE_CONFIG["free_text"]
     return SeedSignal(
         vector=embedding,
-        weight=2.0,
-        reliability=0.8,
-        specificity=0.9,
-        split_power=1.0,
+        weight=config["weight"],
+        reliability=config["reliability"],
+        specificity=config["specificity"],
+        split_power=config["split_power"],
         label=phrase,
         source="free_text",
     )

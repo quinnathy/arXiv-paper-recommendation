@@ -13,6 +13,32 @@ import streamlit as st
 
 from user.db import authenticate_user, get_user
 
+TRANSIENT_USER_STATE_KEYS = (
+    "active_arxiv_id",
+    "active_tab",
+    "active_tab_value",
+    "learning_workspace",
+    "overlay_page",
+    "requested_tab",
+    "responded",
+    "right_sidebar_collapsed",
+    "shown_ids",
+    "todays_recs",
+)
+TRANSIENT_USER_STATE_PREFIXES = (
+    "query_search_",
+    "workspace_",
+)
+
+
+def _clear_transient_user_state() -> None:
+    for key in TRANSIENT_USER_STATE_KEYS:
+        st.session_state.pop(key, None)
+
+    for key in list(st.session_state):
+        if key.startswith(TRANSIENT_USER_STATE_PREFIXES):
+            st.session_state.pop(key, None)
+
 
 def load_or_init_session(db_path: str) -> None:
     """Initialize Streamlit session state with default user values.
@@ -61,9 +87,7 @@ def login_user(user_id: str, db_path: str) -> bool:
     st.session_state["thread_weights"] = user.get("thread_weights")
     st.session_state["seed_thread_labels"] = None
     st.session_state["onboarded"] = True
-    st.session_state.pop("todays_recs", None)
-    st.session_state.pop("responded", None)
-    st.session_state.pop("shown_ids", None)
+    _clear_transient_user_state()
     return True
 
 
@@ -81,14 +105,13 @@ def login_with_credentials(username: str, password: str) -> bool:
     st.session_state["thread_weights"] = user.get("thread_weights")
     st.session_state["seed_thread_labels"] = None
     st.session_state["onboarded"] = True
-    st.session_state.pop("todays_recs", None)
-    st.session_state.pop("responded", None)
-    st.session_state.pop("shown_ids", None)
+    _clear_transient_user_state()
     return True
 
 
 def logout_user() -> None:
     """Clear user/auth session state for a clean logged-out state."""
+    _clear_transient_user_state()
     for key in (
         "user_id",
         "user_centroids",
@@ -98,10 +121,6 @@ def logout_user() -> None:
         "thread_weights",
         "seed_thread_labels",
         "onboarded",
-        "todays_recs",
-        "responded",
-        "shown_ids",
-        "overlay_page",
     ):
         st.session_state.pop(key, None)
     load_or_init_session("")
