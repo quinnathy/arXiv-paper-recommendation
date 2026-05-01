@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from pathlib import Path
+from functools import partial
 
 import numpy as np
 import streamlit as st
@@ -67,26 +68,33 @@ def _handle_feedback(
 
     recs = st.session_state.get("todays_recs", [])
     meta = next((r for r in recs if r["id"] == arxiv_id), None)
-    cluster_id = meta["cluster_id"] if meta else 0
-    score = meta.get("rec_score", 0.0) if meta else 0.0
 
-    paper_idx = None
-    for i, pm in enumerate(index.paper_meta):
-        if pm["id"] == arxiv_id:
-            paper_idx = i
-            break
+    if not meta:
+        return
+
+    cluster_id = meta["cluster_id"]
+    score = meta.get("rec_score", 0.0)
+
+    paper_idx = next(
+        (i for i, p in enumerate(index.paper_meta) if p["id"] == arxiv_id),
+        None,
+    )
 
     log_feedback(user_id, arxiv_id, signal, cluster_id, score)
 
     if paper_idx is not None:
-        paper_emb = index.embeddings[paper_idx]
-        new_centroids = apply_feedback(centroids, paper_emb, signal)
+        emb = index.embeddings[paper_idx]
+        new_centroids = apply_feedback(centroids, emb, signal)
         update_centroids(user_id, new_centroids)
         save_centroids_to_session(new_centroids)
 
-    if "responded" not in st.session_state:
-        st.session_state["responded"] = set()
-    st.session_state["responded"].add(arxiv_id)
+    # unify state updates
+    key_map = {"like": "liked", "save": "saved", "skip": "skipped"}
+    key = key_map.get(signal)
+    if key:
+        st.session_state.setdefault(key, set()).add(arxiv_id)
+
+    st.session_state.setdefault("responded", set()).add(arxiv_id)
     st.rerun()
 
 
@@ -226,7 +234,7 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
         fig = make_user_cluster_plot(
             filtered,
             user_centroid_coords=centroid_coords,
-            searched_cluster_ids=searched_clusters if show_searched else None,
+            searched_cluster_ids=searched_clusters if show_searched else None,   
             served_paper_indices=served_indices if show_served else None,
             color_by=color_by,
         )
@@ -242,40 +250,31 @@ def _render_embedding_space(index: PaperIndex, recs: list[dict]) -> None:
 
 
 def render_daily_feed(index: PaperIndex, db_path: str) -> None:
-    """Render the daily paper feed for an onboarded user.
-
-    Args:
-        index: The loaded PaperIndex for recommendation lookups.
-        db_path: Path to the SQLite database for feedback logging.
-    """
-    user_id = st.session_state["user_id"]
-    user = get_user(user_id)
+    user = get_user(st.session_state["user_id"])
 
     if render_query_search(index):
         return
-
+    
     hour = datetime.now().hour
-    if hour < 5:
-        greeting = "Good evening"
-    elif hour < 12:
+
+    if 5 <= hour < 12:
         greeting = "Good morning"
-    elif hour < 18:
+    elif 12 <= hour < 18:
         greeting = "Good afternoon"
-    else:
+    elif 18 <= hour < 22:
         greeting = "Good evening"
+    else:
+        greeting = "Up late? No worries"
+
     st.title(f"{greeting}, {user['display_name']}")
-    st.caption(date.today().strftime("%A, %B %d, %Y"))
 
     try:
         centroids = st.session_state.get("user_centroids")
-        joke = select_domain_joke(centroids, user_id)
+        joke = select_domain_joke(centroids, st.session_state["user_id"])
         if joke:
             st.caption(joke["joke"])
     except Exception:
         pass
-
-    if "shown_ids" not in st.session_state:
-        st.session_state["shown_ids"] = set()
 
     if "todays_recs" not in st.session_state:
         centroids = st.session_state["user_centroids"]
@@ -285,57 +284,34 @@ def render_daily_feed(index: PaperIndex, db_path: str) -> None:
         with loading_spinner_with_message():
             recs = recommend(
                 centroids,
-                excluded_ids,
+                get_seen_ids(st.session_state["user_id"]),
                 index,
-                diversity=diversity,
+                diversity=st.session_state["user_diversity"],
                 n=DAILY_FEED_SIZE,
             )
-            if len(recs) < DAILY_FEED_SIZE and seen_ids:
-                fallback_recs = recommend(
-                    centroids,
-                    st.session_state["shown_ids"],
-                    index,
-                    diversity=diversity,
-                    n=DAILY_FEED_SIZE,
-                )
-                rec_ids = {r["id"] for r in recs}
-                for rec in fallback_recs:
-                    if rec["id"] in rec_ids:
-                        continue
-                    recs.append(rec)
-                    rec_ids.add(rec["id"])
-                    if len(recs) >= DAILY_FEED_SIZE:
-                        break
-        mark_papers_seen(user_id, [r["id"] for r in recs])
-        st.session_state["todays_recs"] = recs
-        st.session_state["shown_ids"].update(r["id"] for r in recs)
 
-    if "responded" not in st.session_state:
-        st.session_state["responded"] = set()
+        st.session_state["todays_recs"] = recs
+        mark_papers_seen(st.session_state["user_id"], [r["id"] for r in recs])
 
     recs = st.session_state["todays_recs"]
 
-    if not recs:
-        st.info("No recommendations are available right now.")
-        if st.button("Reset and start fresh"):
-            st.session_state["shown_ids"] = set()
-            st.session_state.pop("todays_recs", None)
-            st.session_state.pop("responded", None)
-            st.rerun()
-        return
+    liked = st.session_state.get("liked", set())
+    saved = st.session_state.get("saved", set())
+    skipped = st.session_state.get("skipped", set())
 
     for meta in recs:
+        arxiv_id = meta["id"]
+
         paper_card(
             meta,
-            on_like=lambda aid: _handle_feedback(aid, "like", index),
-            on_save=lambda aid: _handle_feedback(aid, "save", index),
-            on_skip=lambda aid: _handle_feedback(aid, "skip", index),
+            on_like=partial(_handle_feedback, "like", index),
+            on_save=partial(_handle_feedback, "save", index),
+            on_skip=partial(_handle_feedback, "skip", index),
+            liked=arxiv_id in liked,
+            saved=arxiv_id in saved,
+            skipped=arxiv_id in skipped,
         )
 
-    with st.expander("Embedding space", expanded=False):
-        _render_embedding_space(index, recs)
-
     responded = st.session_state.get("responded", set())
-    rec_ids = {r["id"] for r in recs}
-    if rec_ids and rec_ids.issubset(responded):
-        st.success("Come back tomorrow for new recommendations!")
+    if recs and all(r["id"] in responded for r in recs):
+        st.success("That's everything for today.")

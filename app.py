@@ -118,8 +118,16 @@ else:
         user_data = get_user(user_id)
 
         # Profile Image and Name
-        avatar_file = user_data.get("profile_pic", "default_avatar.jpg")
-        st.image(f".streamlit\\static\\avatars\\{avatar_file}", width=80)
+        avatar_file = user_data.get("profile_pic") or "default_avatar.jpg"
+        avatar_path = Path(".streamlit/static/avatars") / avatar_file 
+
+        if avatar_path.exists():
+            # Read as binary to ensure it renders correctly regardless of browser security
+            with open(avatar_path, "rb") as f:
+                st.image(f.read(), width=80)
+        else:
+            # Optional fallback if the file is missing
+            st.markdown('<div style="font-size:3.5rem;">&#129489;</div>', unsafe_allow_html=True) 
         st.markdown(f"**{user_data['display_name']}**")
 
         if st.button(
@@ -132,6 +140,7 @@ else:
 
         if st.button("Log out", width="stretch"):
             logout_user()
+            st.session_state.clear()
             st.rerun()
 
         st.divider()

@@ -82,94 +82,84 @@ def _handle_search_feedback(arxiv_id: str, signal: str, index: PaperIndex) -> No
         update_centroids(user_id, new_centroids)
         save_centroids_to_session(new_centroids)
 
-    if "responded" not in st.session_state:
-        st.session_state["responded"] = set()
-    st.session_state["responded"].add(arxiv_id)
+    # --- NEW: update UI state ---
+    if signal == "like":
+        liked = set(st.session_state.get("liked", set()))
+        liked.add(arxiv_id)
+        st.session_state["liked"] = liked
+
+    elif signal == "save":
+        saved = set(st.session_state.get("saved", set()))
+        saved.add(arxiv_id)
+        st.session_state["saved"] = saved
+
+    elif signal == "skip":
+        skipped = set(st.session_state.get("skipped", set()))
+        skipped.add(arxiv_id)
+        st.session_state["skipped"] = skipped
     st.rerun()
 
 
 def render_query_search(index: PaperIndex) -> bool:
-    """Render query search and return True when search results own the page."""
-    if st.session_state.pop("query_search_clear_requested", False):
-        _clear_query_search_state()
-
     user_id = st.session_state["user_id"]
 
     st.markdown("**Search papers by topic, method, dataset, or research question...**")
 
-    search_col, options_col = st.columns([0.92, 0.08])
-    with search_col:
-        query = st.text_input(
-            "Search papers by topic, method, dataset, or research question...",
-            placeholder=_rotating_search_placeholder(),
-            key="query_search_input",
-            label_visibility="collapsed",
-        )
-    with options_col:
-        options_open = st.session_state.get("query_search_options_open", False)
-        if st.button(
-            "▲" if options_open else "▼",
-            key="query_search_options_toggle",
-            help="Search options",
-            use_container_width=True,
-        ):
-            st.session_state["query_search_options_open"] = not options_open
-            st.rerun()
+    query = st.text_input(
+        "",
+        key="query_search_input",
+        placeholder="Try: diffusion models for medical imaging",
+        label_visibility="collapsed",
+    )
 
-    time_filter_label = st.session_state.get("query_search_time_filter", "All time")
-    if st.session_state.get("query_search_options_open", False):
-        time_filter_label = st.selectbox(
-            "Time range",
-            options=["All time", "Past year", "Past 6 months", "Past 30 days"],
-            index=0,
-            key="query_search_time_filter",
-        )
     submitted = st.button("Search", key="query_search_submit")
 
     if submitted and query.strip():
-        time_filter_days = {
-            "All time": None,
-            "Past year": 365,
-            "Past 6 months": 183,
-            "Past 30 days": 30,
-        }[time_filter_label]
         expanded = expand_query(query)
+
         with loading_spinner_with_message():
             model = _get_query_embed_model()
-            query_embedding = model.embed_query(expanded)
+            q_emb = model.embed_query(expanded)
+
             results = search_papers(
                 query=query,
-                query_embedding=query_embedding,
+                query_embedding=q_emb,
                 user_centroids=st.session_state["user_centroids"],
                 index=index,
                 seen_ids=get_seen_ids(user_id),
                 diversity=st.session_state["user_diversity"],
                 n=20,
-                time_filter_days=time_filter_days,
             )
+
         st.session_state["query_search_query"] = query
-        st.session_state["query_search_expanded_query"] = expanded
         st.session_state["query_search_results"] = results
 
     results = st.session_state.get("query_search_results", [])
     if not results:
         return False
 
-    st.subheader(f"Search results for \"{st.session_state.get('query_search_query', '')}\"")
-    if st.button("Go back to daily recommendations", key="query_search_clear"):
-        st.session_state["query_search_clear_requested"] = True
+    st.subheader(f"Results for: {st.session_state.get('query_search_query','')}")
+
+    if st.button("Back to feed"):
+        st.session_state.pop("query_search_results", None)
         st.rerun()
 
+    # precompute state sets (avoids repeated lookup)
+    liked = st.session_state.get("liked", set())
+    saved = st.session_state.get("saved", set())
+    skipped = st.session_state.get("skipped", set())
+
     for meta in results:
+        arxiv_id = meta["id"]
+
         paper_card(
             meta,
-            on_like=lambda aid: _handle_search_feedback(aid, "like", index),
-            on_save=lambda aid: _handle_search_feedback(aid, "save", index),
-            on_skip=lambda aid: _handle_search_feedback(aid, "skip", index),
+            on_like=partial(_handle_search_feedback, "like", index),
+            on_save=partial(_handle_search_feedback, "save", index),
+            on_skip=partial(_handle_search_feedback, "skip", index),
+            liked=arxiv_id in liked,
+            saved=arxiv_id in saved,
+            skipped=arxiv_id in skipped,
         )
-        if st.button("Open in Research Lab", key=f"open_research_{meta['id']}"):
-            st.session_state["active_arxiv_id"] = meta["id"]
-            st.session_state["requested_tab"] = "Research Lab"
-            st.rerun()
 
     return True
