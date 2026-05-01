@@ -30,8 +30,8 @@ EMA_ALPHA: float = 0.15
 # Agglomerative grouping defaults
 # ---------------------------------------------------------------------------
 
-MERGE_THRESHOLD: float = 0.02
-MAX_THREADS: int = 5
+MERGE_THRESHOLD: float = 0.03
+MAX_THREADS: int = 3
 CORE_SPLIT_POWER: float = 0.6
 
 
@@ -41,19 +41,19 @@ CORE_SPLIT_POWER: float = 0.6
 
 SEED_SOURCE_CONFIG: dict[str, dict[str, float]] = {
     "arxiv_category": {
-        "weight": 1.0,
+        "weight": 1.8,
         "reliability": 0.9,
         "specificity": 0.3,
-        "split_power": 0.4,
+        "split_power": 0.45,
     },
     "predefined_tag": {
-        "weight": 1.5,
+        "weight": 1.8,
         "reliability": 0.9,
         "specificity": 0.7,
         "split_power": 0.7,
     },
     "scholar_title": {
-        "weight": 1.5,
+        "weight": 2.0,
         "reliability": 0.95,
         "specificity": 0.8,
         "split_power": 0.9,
