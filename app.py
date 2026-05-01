@@ -119,7 +119,7 @@ else:
 
         # Profile Image and Name
         avatar_file = user_data.get("profile_pic", "default_avatar.jpg")
-        st.image(f"assets/avatars/{avatar_file}", width=80)
+        st.image(f".streamlit\\static\\avatars\\{avatar_file}", width=80)
         st.markdown(f"**{user_data['display_name']}**")
 
         if st.button(
