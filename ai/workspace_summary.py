@@ -14,6 +14,10 @@ MAX_PAPER_TEXT_CHARS = 45000
 PDF_DOWNLOAD_TIMEOUT = 30
 
 
+def resolve_summary_model(model: str | None = None) -> str:
+    return model or os.getenv("OPENAI_SUMMARY_MODEL", DEFAULT_SUMMARY_MODEL)
+
+
 def _download_pdf(arxiv_id: str) -> bytes:
     response = requests.get(
         f"https://arxiv.org/pdf/{arxiv_id}.pdf",
@@ -116,17 +120,23 @@ def summarize_workspace(
         "## Thesis\n"
         "Give the main overview of the workspace in 2-4 sentences: the field or "
         "subfield it covers, the central problem family, and the broad direction the "
-        "papers point toward together.\n\n"
+        "papers point toward together. Use concrete problem or idea names that can "
+        "later become labels for visualization edges between papers.\n\n"
         "## Paper Roles\n"
         "Briefly identify how each paper fits into the field(s) the workspace covers. "
         "For each paper, use its title or a short title, then summarize its role and "
         "main research method, such as a modeling approach, benchmark, dataset, "
         "algorithm, theory, application study, evaluation, or survey.\n\n"
-        "## Shared Ideas / Connections\n"
-        "Synthesize the main ideas that recur across the workspace. Focus on methods, "
-        "assumptions, tasks, datasets, evaluation patterns, motivations, and ways the "
-        "papers complement one another. Prefer concrete connections over generic "
+        "## Shared Research Problems / Ideas\n"
+        "Synthesize the research problems, thesis-level ideas, and motivations that "
+        "recur across the workspace. Name the specific papers connected by each "
+        "shared problem or idea, and prefer concise reusable labels over generic "
         "claims.\n\n"
+        "## Similarities\n"
+        "Identify concrete similarities between papers. Group them by assumptions, "
+        "methodology, datasets, and evaluations when those details are present. Name "
+        "the specific papers connected by each similarity so a downstream graph "
+        "agent can turn them into edges.\n\n"
         "## Tensions / Gaps\n"
         "Identify open problems, limitations, tradeoffs, conflicting assumptions, "
         "missing experiments, or places where one paper's approach leaves room for "
@@ -155,7 +165,7 @@ def summarize_workspace(
             "Content-Type": "application/json",
         },
         json={
-            "model": model or os.getenv("OPENAI_SUMMARY_MODEL", DEFAULT_SUMMARY_MODEL),
+            "model": resolve_summary_model(model),
             "instructions": (
                 "You are a careful research assistant helping a student understand "
                 "papers in a reading workspace."
